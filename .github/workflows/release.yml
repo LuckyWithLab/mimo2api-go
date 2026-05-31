@@ -53,7 +53,7 @@ jobs:
           go build -trimpath -ldflags="-s -w" -o bin/${{ matrix.binary_name }} ./cmd/mimo2api
 
       - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: bin/${{ matrix.binary_name }}
           generate_release_notes: true
