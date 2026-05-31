@@ -1,0 +1,8 @@
+bin/
+*.db
+*.db-shm
+*.db-wal
+*.lock
+mimo2api-go
+mimo2api_go
+gateway_snapshot.json
