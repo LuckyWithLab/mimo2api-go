@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -270,7 +269,7 @@ func (c *NativeClawClient) Connect() bool {
 		if err == nil {
 			break
 		}
-		log.Printf("getTicket failed on %s: %v", resolvedIP, err)
+		managerLogf("getTicket failed on %s: %v", resolvedIP, err)
 	}
 
 	if ticket == "" {
@@ -286,7 +285,7 @@ func (c *NativeClawClient) Connect() bool {
 
 	conn, _, err := dialer.DialContext(c.ctx, url, headers)
 	if err != nil {
-		log.Printf("WS connect failed on %s: %v", resolvedIP, err)
+		managerLogf("WS connect failed on %s: %v", resolvedIP, err)
 		return false
 	}
 
@@ -320,7 +319,7 @@ func (c *NativeClawClient) readLoop() {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			log.Printf("WS read error: %v", err)
+			managerLogf("WS read error: %v", err)
 			break
 		}
 
@@ -579,7 +578,7 @@ func (c *NativeClawClient) GetInstanceStatus() (status string, remainSec int) {
 	path := "/open-apis/user/mimo-claw/status"
 	resp, err := c.doAistudioReq("GET", path, nil, 5*time.Second, "")
 	if err != nil {
-		log.Printf("GetInstanceStatus failed: %v", err)
+		managerLogf("GetInstanceStatus failed: %v", err)
 		return "ERROR", 0
 	}
 	defer resp.Body.Close()
@@ -616,7 +615,7 @@ func (c *NativeClawClient) DestroyClaw() bool {
 	path := fmt.Sprintf("/open-apis/user/mimo-claw/destroy?xiaomichatbot_ph=%s", escapedPH)
 	resp, err := c.doAistudioReq("POST", path, nil, 30*time.Second, "")
 	if err != nil {
-		log.Printf("DestroyClaw error: %v", err)
+		managerLogf("DestroyClaw error: %v", err)
 		return false
 	}
 	defer resp.Body.Close()
@@ -641,7 +640,7 @@ func (c *NativeClawClient) CreateAndWait() bool {
 	createPath := fmt.Sprintf("/open-apis/user/mimo-claw/create?xiaomichatbot_ph=%s", escapedPH)
 	resp, err := c.doAistudioReq("POST", createPath, nil, 20*time.Second, "")
 	if err != nil {
-		log.Printf("CreateClaw request failed: %v", err)
+		managerLogf("CreateClaw request failed: %v", err)
 		return false
 	}
 	defer resp.Body.Close()
@@ -682,13 +681,13 @@ func (c *NativeClawClient) TryShutdownInstance(status string) {
 
 	reply, err := c.SendChatAndWaitReply(remoteShutdownPrompt, 90*time.Second, nil)
 	if err != nil {
-		log.Printf("shutdown prompt failed for user %s: %v", c.UserID, err)
+		managerLogf("shutdown prompt failed for user %s: %v", c.UserID, err)
 		time.Sleep(8 * time.Second)
 		return
 	}
 	if looksLikeShutdownConfirmation(reply) {
 		if _, err := c.SendChatAndWaitReply(remoteShutdownConfirmPrompt, 45*time.Second, nil); err != nil {
-			log.Printf("shutdown confirm failed for user %s: %v", c.UserID, err)
+			managerLogf("shutdown confirm failed for user %s: %v", c.UserID, err)
 		}
 	}
 	time.Sleep(8 * time.Second)

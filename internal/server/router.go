@@ -51,6 +51,7 @@ func SetupRouter() *gin.Engine {
 	api.Use(auth.APIAuthMiddleware())
 	{
 		api.POST("/chat/completions", ChatCompletionsHandler)
+		api.POST("/messages", ChatCompletionsHandler)
 		api.GET("/models", ModelsHandler)
 		api.POST("/responses", ResponsesHandler)
 	}

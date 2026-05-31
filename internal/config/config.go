@@ -14,6 +14,7 @@ var (
 	ServerPort              int
 	GinMode                 string
 	TrustedProxies          []string
+	ManagerLogPath          string
 	ShutdownTaskTimeout     int
 	APIKeys                 []string
 	WSAuthToken             string
@@ -41,6 +42,7 @@ func Load() {
 	ServerPort = getEnvAsInt("SERVER_PORT", 8000)
 	GinMode = getFirstEnv([]string{"MIMO_GIN_MODE", "GIN_MODE"}, "release")
 	TrustedProxies = getEnvAsSliceFromKeys([]string{"MIMO_TRUSTED_PROXIES", "TRUSTED_PROXIES"}, nil)
+	ManagerLogPath = getEnv("MIMO_MANAGER_LOG_PATH", "logs/manager.log")
 	ShutdownTaskTimeout = getEnvAsInt("MIMO_SHUTDOWN_TASK_TIMEOUT", 5)
 
 	APIKeys = getEnvAsSliceFromKeys([]string{"MIMO_RELAY_OPENAI_KEY", "MIMO_API_KEYS"}, nil)

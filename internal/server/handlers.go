@@ -422,6 +422,9 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 
 	// Convert for /v1/responses if needed
 	forwardPath := c.Request.URL.Path
+	if forwardPath == "/v1/messages" {
+		forwardPath = "/anthropic/v1/messages"
+	}
 	if isResponses {
 		forwardPath = "/v1/chat/completions" // forward to chat completions
 		if reqData != nil {
