@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g., v1.0.0)'
+        required: true
+        default: 'v0.1.0'
 
 permissions:
   contents: write
@@ -55,6 +61,7 @@ jobs:
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ github.event.inputs.tag_name || github.ref_name }}
           files: bin/${{ matrix.binary_name }}
           generate_release_notes: true
         env:
