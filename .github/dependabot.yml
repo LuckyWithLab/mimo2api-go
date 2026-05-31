@@ -1,0 +1,21 @@
+version: 2
+updates:
+  # Go modules dependencies
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 10
+
+  # GitHub Actions workflows dependencies
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "08:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5

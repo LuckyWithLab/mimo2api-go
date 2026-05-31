@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            binary_name: mimo2api-go-linux-amd64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            binary_name: mimo2api-go-windows-amd64.exe
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            binary_name: mimo2api-go-darwin-amd64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            binary_name: mimo2api-go-darwin-arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.3'
+          cache: true
+
+      - name: Build Binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 1
+        shell: bash
+        run: |
+          mkdir -p bin
+          go build -trimpath -ldflags="-s -w" -o bin/${{ matrix.binary_name }} ./cmd/mimo2api
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: bin/${{ matrix.binary_name }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
