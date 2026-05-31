@@ -566,7 +566,8 @@ func (c *NativeClawClient) UploadFile(filePath string) (map[string]interface{}, 
 func (c *NativeClawClient) SendFileMessage(fileInfo map[string]interface{}, promptText string) (string, error) {
 	payload := map[string]interface{}{
 		"files":  []interface{}{fileInfo},
-		"prompt": "The above is a list of files uploaded by the user. Please download the files before answering the user's question.",
+		"prompt": config.MimoFileMetadataPrompt,
+		// raw: The above is a list of files uploaded by the user. Please download the files before answering the user's question.
 	}
 	payloadBytes, _ := json.Marshal(payload)
 	msgText := fmt.Sprintf("<mimo-files>\n%s\n</mimo-files>\n%s", string(payloadBytes), promptText)

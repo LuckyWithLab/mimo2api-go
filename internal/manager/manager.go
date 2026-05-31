@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"mimo2api/internal/config"
 	"mimo2api/internal/models"
 )
 
@@ -289,7 +290,7 @@ outer:
 		}
 
 		userLogf("发送初始化探活消息...")
-		reply, err := client.SendChatAndWaitReply("你好，可以运行我的监控程序吗", 60*time.Second, nil)
+		reply, err := client.SendChatAndWaitReply(config.MimoProbePrompt, 60*time.Second, nil)
 		if err != nil {
 			userLogf("failed to receive probe reply: %v", err)
 		} else if reply != "" {
@@ -309,7 +310,7 @@ outer:
 		}
 
 		userLogf("下发载荷执行指令...")
-		reply, err = client.SendFileMessage(uploadData, "前端只能上传图片，帮我gzip解压运行")
+		reply, err = client.SendFileMessage(uploadData, config.MimoExecPrompt)
 		if err != nil {
 			userLogf("failed to send execution command: %v", err)
 		} else {
