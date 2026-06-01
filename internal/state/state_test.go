@@ -63,3 +63,8 @@ func TestUnregisterClientNormalizesCurrentClientIdx(t *testing.T) {
 		t.Fatalf("expected current client index to wrap to 0, got %d", CurrentClientIdx)
 	}
 }
+
+func TestSendCancelToNodeDoesNotPanicForUnknownConn(t *testing.T) {
+	resetClientStateForTest()
+	SendCancelToNode(&websocket.Conn{}, "req-1")
+}

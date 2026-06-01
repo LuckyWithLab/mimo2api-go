@@ -703,11 +703,40 @@ func RegisterClient(ws *websocket.Conn, host string) {
 	BridgeReady[ws] = true
 }
 
+// SendCancelToNode sends a cancel message to the node for a given request.
+// The bridge may or may not support it, but we send it anyway as a best-effort cleanup.
+func SendCancelToNode(ws *websocket.Conn, reqID string) {
+	mu.RLock()
+	tc, ok := ActiveClients[ws]
+	mu.RUnlock()
+	if !ok {
+		return
+	}
+
+	tc.Mu.Lock()
+	defer tc.Mu.Unlock()
+	err := ws.WriteJSON(map[string]interface{}{
+		"type":   "cancel",
+		"req_id": reqID,
+	})
+	if err != nil {
+		log.Printf("[ERR] node=%s req=%s reason=cancel_send_failed err=%v", tc.Host, reqID, err)
+	}
+}
+
 func UnregisterClient(ws *websocket.Conn) {
 	mu.Lock()
 	defer mu.Unlock()
 
+	var host string
+	if tc, ok := ActiveClients[ws]; ok {
+		host = tc.Host
+	}
+
 	if reqs, ok := WSToReqIDs[ws]; ok {
+		if len(reqs) > 0 {
+			log.Printf("[ERR] node=%s reason=ws_disconnect affected_requests=%d", host, len(reqs))
+		}
 		for reqID := range reqs {
 			if ch, ok := PendingQueues[reqID]; ok {
 				select {

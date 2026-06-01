@@ -7,3 +7,5 @@ mimo2api-go
 mimo2api_go
 gateway_snapshot.json
 .ai_memory
+*.gif
+target
