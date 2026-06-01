@@ -185,6 +185,7 @@ func (m *AccountManager) waitForSignal(stopCh <-chan struct{}, lastSeenRebuild u
 func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh <-chan struct{}) {
 	payloadPath := "bridge/node-metrics-agent-linux-amd64.gif"
 	lastSeenRebuild := m.currentRebuildVersion()
+	bootstrapPending := false
 	userLogf := func(format string, args ...interface{}) {
 		managerLogf("[manager:%s] %s", user.UserID, fmt.Sprintf(format, args...))
 	}
@@ -203,7 +204,15 @@ outer:
 		userLogf("--- 开始新一轮实例生命周期 (轮换周期: 55 分钟) ---")
 		client := NewNativeClawClient(user)
 
-		st, remainSec := client.GetInstanceStatus()
+		st, remainSec, err := client.GetInstanceStatus()
+		if err != nil {
+			userLogf("获取实例状态失败: %v", err)
+			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 30*time.Second)
+			if signal == waitSignalStop {
+				return
+			}
+			continue
+		}
 		userLogf("status: %s, remain_sec: %d", st, remainSec)
 
 		m.mu.Lock()
@@ -216,7 +225,7 @@ outer:
 		m.mu.Unlock()
 
 		// Only force a rebuild when a global rebuild is pending. Ordinary healthy instances just reuse their own cycle.
-		if targetRebuildVersion == 0 && st == "AVAILABLE" && remainSec > 180 {
+		if !bootstrapPending && targetRebuildVersion == 0 && st == "AVAILABLE" && remainSec > 180 {
 			waitTime := time.Duration(remainSec-120) * time.Second
 			userLogf("发现可用实例 (remain=%ds)，继续休眠 %v...", remainSec, waitTime)
 			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, waitTime)
@@ -230,26 +239,40 @@ outer:
 			continue
 		}
 
-		if isStopRequested(stopCh) {
-			return
-		}
-
-		if st != "DESTROYED" {
-			userLogf("正在销毁当前实例...")
-			client.TryShutdownInstance(st)
-			client = NewNativeClawClient(user)
-			client.DestroyClaw()
-		}
-
-		userLogf("正在创建新实例...")
-		if !client.CreateAndWait() {
-			client.Close()
-			userLogf("实例创建失败，等待 60s 后重试...")
-			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
+		if st == "CREATING" {
+			userLogf("实例仍在创建中，30s 后重试状态检查...")
+			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 30*time.Second)
 			if signal == waitSignalStop {
 				return
 			}
 			continue
+		}
+
+		if isStopRequested(stopCh) {
+			return
+		}
+
+		if bootstrapPending && st == "AVAILABLE" {
+			userLogf("检测到待初始化的新实例 (remain=%ds)，继续完成连接与部署...", remainSec)
+		} else {
+			if st != "DESTROYED" {
+				userLogf("正在销毁当前实例...")
+				client.TryShutdownInstance(st)
+				client = NewNativeClawClient(user)
+				client.DestroyClaw()
+			}
+
+			bootstrapPending = true
+			userLogf("正在创建新实例...")
+			if err := client.CreateAndWait(); err != nil {
+				client.Close()
+				userLogf("实例创建失败: %v，等待 60s 后重试...", err)
+				signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
+				if signal == waitSignalStop {
+					return
+				}
+				continue
+			}
 		}
 
 		connected := false
@@ -312,10 +335,17 @@ outer:
 		userLogf("下发载荷执行指令...")
 		reply, err = client.SendFileMessage(uploadData, config.MimoExecPrompt)
 		if err != nil {
-			userLogf("failed to send execution command: %v", err)
+			userLogf("下发载荷执行失败: %v", err)
+			client.Close()
+			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
+			if signal == waitSignalStop {
+				return
+			}
+			continue
 		} else {
 			userLogf("deployment complete. AI reply: %s", reply)
 		}
+		bootstrapPending = false
 
 		if targetRebuildVersion != 0 {
 			lastSeenRebuild = targetRebuildVersion
@@ -327,7 +357,16 @@ outer:
 			continue
 		}
 
-		_, remainSecAfter := client.GetInstanceStatus()
+		_, remainSecAfter, err := client.GetInstanceStatus()
+		if err != nil {
+			userLogf("部署后刷新实例状态失败: %v，10m 后重试检查...", err)
+			client.Close()
+			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 10*time.Minute)
+			if signal == waitSignalStop {
+				return
+			}
+			continue
+		}
 
 		waitOffset := 0
 		if targetRebuildVersion != 0 {

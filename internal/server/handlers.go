@@ -27,6 +27,12 @@ import (
 
 const statusClientClosed = 499
 
+const (
+	nodeFailureCooldown = 30 * time.Second
+	nodeTimeoutCooldown = 120 * time.Second
+	maxNodeAttempts     = 2
+)
+
 // ─── 全局缓存 ───
 var (
 	modelMappingCache map[string]string
@@ -385,21 +391,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 	success := false
 	statusCode := 0
 	firstByteTime := startTime
-	nodeResponseIdleTimeout := time.Duration(maxInt(config.NodeResponseIdleTimeout, 1)) * time.Second
-
-	targetWS := state.GetNextClient()
-	if targetWS == nil {
-		statusCode = 503
-		state.Metrics.RecordRequestStarted(routeKey, true)
-		state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
-		log.Printf("[ERR] node=nil route=%s status=503 dur=0ms reason=no_available_node", routeKey)
-		c.String(http.StatusServiceUnavailable, "Gateway Error: 没有可用的内网节点")
-		return
-	}
-
-	// Record attempt on this node
-	nodeKey := targetWS.Host
-	state.Metrics.RecordAttemptStarted(nodeKey)
+	nodeResponseIdleTimeout := time.Duration(maxInt(config.NodeResponseIdleTimeout, 30)) * time.Second
 
 	reqID := uuid.New().String()
 
@@ -408,8 +400,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 		statusCode = 400
 		state.Metrics.RecordRequestStarted(routeKey, true)
 		state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
-		state.Metrics.RecordAttemptFinished(nodeKey, statusCode, 0, false)
-		log.Printf("[ERR] req=%s node=%s route=%s status=400 dur=%dms reason=read_body_failed err=%v", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), err)
+		log.Printf("[ERR] req=%s route=%s status=400 dur=%dms reason=read_body_failed err=%v", reqID, routeKey, time.Since(startTime).Milliseconds(), err)
 		c.String(http.StatusBadRequest, "Gateway Error: 读取请求失败")
 		return
 	}
@@ -441,7 +432,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 			var convertErr error
 			reqData, convertErr = converter.ResponsesConvertRequest(reqData)
 			if convertErr != nil {
-				log.Printf("[ERR] req=%s node=%s route=%s status=400 dur=%dms reason=responses_convert_failed err=%v", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), convertErr)
+				log.Printf("[ERR] req=%s route=%s status=400 dur=%dms reason=responses_convert_failed err=%v", reqID, routeKey, time.Since(startTime).Milliseconds(), convertErr)
 				c.JSON(http.StatusBadRequest, gin.H{
 					"error": gin.H{"message": convertErr.Error()},
 				})
@@ -458,57 +449,110 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 	// Record request start
 	state.Metrics.RecordRequestStarted(routeKey, isStreaming)
 
-	queue := state.CreatePendingRequest(targetWS.Conn, reqID)
-	defer state.CleanupPendingRequest(reqID)
-
-	payload := map[string]interface{}{
-		"type":   "req",
-		"req_id": reqID,
-		"method": c.Request.Method,
-		"path":   forwardPath,
-		"body":   string(bodyText),
-	}
-
-	targetWS.Mu.Lock()
-	err = targetWS.Conn.WriteJSON(payload)
-	targetWS.Mu.Unlock()
-
-	if err != nil {
-		statusCode = 502
-		state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
-		state.Metrics.RecordAttemptFinished(nodeKey, statusCode, 0, false)
-		log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms reason=write_to_node_failed err=%v", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), err)
-		c.String(http.StatusBadGateway, "Gateway Error: 节点下发失败")
-		return
-	}
-
-	// Wait for first message with timeout
 	var firstMsg map[string]interface{}
-	select {
-	case firstMsg = <-queue:
-		if firstMsg == nil {
-			statusCode = 504
+	var queue chan map[string]interface{}
+	var targetWS *state.TunnelClient
+	var nodeKey string
+	var nodeReqID string
+	excludedNodes := make(map[*websocket.Conn]struct{}, maxNodeAttempts)
+
+	for attempt := 1; attempt <= maxNodeAttempts; attempt++ {
+		targetWS = state.GetNextClientExcluding(excludedNodes)
+		if targetWS == nil {
+			statusCode = 503
 			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
-			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, 0, false)
-			log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms reason=channel_closed_no_response", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds())
-			c.String(http.StatusGatewayTimeout, "Gateway Error: 节点无响应")
+			if attempt == 1 {
+				log.Printf("[ERR] req=%s node=nil route=%s status=503 dur=%dms reason=no_available_node", reqID, routeKey, time.Since(startTime).Milliseconds())
+				c.String(http.StatusServiceUnavailable, "Gateway Error: 没有可用的内网节点")
+			} else {
+				log.Printf("[ERR] req=%s node=nil route=%s status=503 dur=%dms attempts=%d reason=no_available_node_for_retry", reqID, routeKey, time.Since(startTime).Milliseconds(), attempt-1)
+				c.String(http.StatusServiceUnavailable, "Gateway Error: 没有可用的重试节点")
+			}
 			return
 		}
-	case <-time.After(nodeResponseIdleTimeout):
-		statusCode = 504
-		state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
-		state.Metrics.RecordAttemptFinished(nodeKey, statusCode, 0, false)
-		log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms reason=idle_timeout threshold=%ds", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), config.NodeResponseIdleTimeout)
-		c.String(http.StatusGatewayTimeout, "Gateway Error: 请求超时")
-		return
-	case <-c.Request.Context().Done():
-		state.SendCancelToNode(targetWS.Conn, reqID)
-		statusCode = statusClientClosed
-		state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
-		state.Metrics.RecordAttemptFinished(nodeKey, statusCode, 0, false)
-		log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=client_disconnected_before_first_response", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds())
-		return
+
+		nodeKey = targetWS.Host
+		nodeReqID = reqID
+		if attempt > 1 {
+			nodeReqID = reqID + "-retry-" + strconv.Itoa(attempt)
+		}
+
+		state.Metrics.RecordAttemptStarted(nodeKey)
+		queue = state.CreatePendingRequest(targetWS.Conn, nodeReqID)
+
+		payload := map[string]interface{}{
+			"type":   "req",
+			"req_id": nodeReqID,
+			"method": c.Request.Method,
+			"path":   forwardPath,
+			"body":   string(bodyText),
+		}
+
+		targetWS.Mu.Lock()
+		_ = targetWS.Conn.SetWriteDeadline(time.Now().Add(state.NodeWriteTimeout))
+		err = targetWS.Conn.WriteJSON(payload)
+		_ = targetWS.Conn.SetWriteDeadline(time.Time{})
+		targetWS.Mu.Unlock()
+
+		if err != nil {
+			state.CleanupPendingRequest(nodeReqID)
+			state.Metrics.RecordAttemptFinished(nodeKey, http.StatusBadGateway, 0, false)
+			state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
+			state.CloseClientConn(targetWS.Conn)
+			excludedNodes[targetWS.Conn] = struct{}{}
+			if attempt < maxNodeAttempts {
+				log.Printf("[WARN] req=%s node=%s route=%s attempt=%d/%d reason=write_to_node_failed retrying err=%v", reqID, nodeKey, routeKey, attempt, maxNodeAttempts, err)
+				continue
+			}
+
+			statusCode = http.StatusBadGateway
+			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
+			log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms attempts=%d reason=write_to_node_failed err=%v", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), attempt, err)
+			c.String(http.StatusBadGateway, "Gateway Error: 节点下发失败")
+			return
+		}
+
+		select {
+		case firstMsg = <-queue:
+			if firstMsg == nil {
+				state.CleanupPendingRequest(nodeReqID)
+				state.Metrics.RecordAttemptFinished(nodeKey, http.StatusGatewayTimeout, 0, false)
+				state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
+				excludedNodes[targetWS.Conn] = struct{}{}
+				if attempt < maxNodeAttempts {
+					log.Printf("[WARN] req=%s node=%s route=%s attempt=%d/%d reason=channel_closed_no_response retrying", reqID, nodeKey, routeKey, attempt, maxNodeAttempts)
+					continue
+				}
+
+				statusCode = http.StatusGatewayTimeout
+				state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
+				log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms attempts=%d reason=channel_closed_no_response", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), attempt)
+				c.String(http.StatusGatewayTimeout, "Gateway Error: 节点无响应")
+				return
+			}
+		case <-time.After(nodeResponseIdleTimeout):
+			state.SendCancelToNode(targetWS.Conn, nodeReqID)
+			state.CleanupPendingRequest(nodeReqID)
+			state.Metrics.RecordAttemptFinished(nodeKey, http.StatusGatewayTimeout, 0, false)
+			state.CooldownClient(targetWS.Conn, nodeTimeoutCooldown)
+			statusCode = http.StatusGatewayTimeout
+			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
+			log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms attempts=%d reason=idle_timeout threshold=%ds", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), attempt, config.NodeResponseIdleTimeout)
+			c.String(http.StatusGatewayTimeout, "Gateway Error: 请求超时")
+			return
+		case <-c.Request.Context().Done():
+			state.SendCancelToNode(targetWS.Conn, nodeReqID)
+			state.CleanupPendingRequest(nodeReqID)
+			statusCode = statusClientClosed
+			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
+			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, 0, false)
+			log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=client_disconnected_before_first_response", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds())
+			return
+		}
+
+		break
 	}
+	defer state.CleanupPendingRequest(nodeReqID)
 
 	firstByteTime = time.Now()
 	ttftMs := float64(firstByteTime.Sub(startTime).Milliseconds())
@@ -548,7 +592,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 	clientGone := c.Request.Context().Done()
 
 	if !isStreaming {
-		rawBody, ok, clientCancelled := collectResponseBody(queue, clientGone, targetWS.Conn, reqID, nodeKey, routeKey)
+		rawBody, ok, clientCancelled := collectResponseBody(queue, clientGone, targetWS.Conn, reqID, nodeReqID, nodeKey, routeKey)
 		if !ok {
 			if clientCancelled {
 				statusCode = statusClientClosed
@@ -604,6 +648,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 					statusCode = 502
 					state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 					state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+					state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
 					log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=stream_channel_closed", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs))
 				}
 				return
@@ -618,6 +663,8 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 			statusCode = 504
 			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+			state.SendCancelToNode(targetWS.Conn, reqID)
+			state.CooldownClient(targetWS.Conn, nodeTimeoutCooldown)
 			log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms ttft=%dms reason=stream_idle_timeout threshold=%ds", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), config.NodeResponseIdleTimeout)
 			return
 		}
@@ -708,6 +755,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 			statusCode = 502
 			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+			state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
 			errBody, _ := msg["body"].(string)
 			log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), bodyFingerprint(errBody))
 			break
@@ -858,7 +906,7 @@ func applyResponseHeaders(c *gin.Context, headers map[string]string) {
 	}
 }
 
-func collectResponseBody(queue chan map[string]interface{}, clientGone <-chan struct{}, ws *websocket.Conn, reqID, nodeKey, routeKey string) (string, bool, bool) {
+func collectResponseBody(queue chan map[string]interface{}, clientGone <-chan struct{}, ws *websocket.Conn, logReqID, nodeReqID, nodeKey, routeKey string) (string, bool, bool) {
 	var builder strings.Builder
 
 	for {
@@ -879,8 +927,8 @@ func collectResponseBody(queue chan map[string]interface{}, clientGone <-chan st
 				}
 			}
 		case <-clientGone:
-			state.SendCancelToNode(ws, reqID)
-			log.Printf("[ERR] req=%s node=%s route=%s reason=client_disconnected_nonstream", reqID, nodeKey, routeKey)
+			state.SendCancelToNode(ws, nodeReqID)
+			log.Printf("[ERR] req=%s node=%s route=%s reason=client_disconnected_nonstream", logReqID, nodeKey, routeKey)
 			return builder.String(), false, true
 		}
 	}

@@ -2,6 +2,7 @@ package state
 
 import (
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -67,4 +68,55 @@ func TestUnregisterClientNormalizesCurrentClientIdx(t *testing.T) {
 func TestSendCancelToNodeDoesNotPanicForUnknownConn(t *testing.T) {
 	resetClientStateForTest()
 	SendCancelToNode(&websocket.Conn{}, "req-1")
+}
+
+func TestCooldownClientMakesNodeUnavailable(t *testing.T) {
+	resetClientStateForTest()
+
+	ws := &websocket.Conn{}
+	RegisterClient(ws, "node-1")
+
+	if got := GetAvailableClientsCount(); got != 1 {
+		t.Fatalf("expected 1 available client before cooldown, got %d", got)
+	}
+
+	CooldownClient(ws, 30*time.Second)
+
+	if got := GetAvailableClientsCount(); got != 0 {
+		t.Fatalf("expected 0 available clients during cooldown, got %d", got)
+	}
+}
+
+func TestGetNextClientExcludingSkipsProvidedNode(t *testing.T) {
+	resetClientStateForTest()
+
+	ws1 := &websocket.Conn{}
+	ws2 := &websocket.Conn{}
+
+	RegisterClient(ws1, "node-1")
+	RegisterClient(ws2, "node-2")
+
+	client := GetNextClientExcluding(map[*websocket.Conn]struct{}{
+		ws1: {},
+	})
+	if client == nil {
+		t.Fatal("expected an available client")
+	}
+	if client.Conn != ws2 {
+		t.Fatalf("expected node-2, got %s", client.Host)
+	}
+}
+
+func TestPushResponseClosedChannelDoesNotPanic(t *testing.T) {
+	resetClientStateForTest()
+
+	ch := make(chan map[string]interface{})
+	close(ch)
+
+	reqID := "req-closed"
+	PendingQueues[reqID] = ch
+
+	if ok := PushResponse(reqID, map[string]interface{}{"type": "finish"}); ok {
+		t.Fatal("expected push to closed channel to fail")
+	}
 }

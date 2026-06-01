@@ -18,6 +18,7 @@ const (
 	MaxLatencySamples     = 2000                    // 延迟采样保留的最大数量
 	PendingQueueSize      = 100                     // 挂起队列的通道缓冲大小
 	PushResponseTimeout   = 1 * time.Second         // 推送响应的超时时间
+	NodeWriteTimeout      = 5 * time.Second         // 向节点下发请求/取消的写超时
 	MetricsSnapshotPath   = "gateway_snapshot.json" // 指标快照保存路径
 )
 
@@ -715,13 +716,47 @@ func SendCancelToNode(ws *websocket.Conn, reqID string) {
 
 	tc.Mu.Lock()
 	defer tc.Mu.Unlock()
+	_ = ws.SetWriteDeadline(time.Now().Add(NodeWriteTimeout))
 	err := ws.WriteJSON(map[string]interface{}{
 		"type":   "cancel",
 		"req_id": reqID,
 	})
+	_ = ws.SetWriteDeadline(time.Time{})
 	if err != nil {
 		log.Printf("[ERR] node=%s req=%s reason=cancel_send_failed err=%v", tc.Host, reqID, err)
 	}
+}
+
+func CooldownClient(ws *websocket.Conn, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	tc, ok := ActiveClients[ws]
+	if !ok {
+		return
+	}
+
+	until := time.Now().Add(d).Unix()
+	if until > tc.CooldownUntil {
+		tc.CooldownUntil = until
+	}
+}
+
+func CloseClientConn(ws *websocket.Conn) {
+	mu.RLock()
+	tc, ok := ActiveClients[ws]
+	mu.RUnlock()
+	if !ok {
+		return
+	}
+
+	tc.Mu.Lock()
+	defer tc.Mu.Unlock()
+	_ = ws.Close()
 }
 
 func UnregisterClient(ws *websocket.Conn) {
@@ -781,9 +816,17 @@ func UnregisterClient(ws *websocket.Conn) {
 }
 
 func GetNextClient() *TunnelClient {
+	return GetNextClientExcluding(nil)
+}
+
+func GetNextClientExcluding(excluded map[*websocket.Conn]struct{}) *TunnelClient {
 	mu.Lock()
 	defer mu.Unlock()
 
+	return getNextClientLocked(excluded)
+}
+
+func getNextClientLocked(excluded map[*websocket.Conn]struct{}) *TunnelClient {
 	if len(ActiveList) == 0 {
 		return nil
 	}
@@ -794,6 +837,12 @@ func GetNextClient() *TunnelClient {
 	for i := 0; i < len(ActiveList); i++ {
 		c := ActiveList[CurrentClientIdx]
 		CurrentClientIdx = (CurrentClientIdx + 1) % len(ActiveList)
+
+		if excluded != nil {
+			if _, skip := excluded[c]; skip {
+				continue
+			}
+		}
 
 		if tc, ok := ActiveClients[c]; ok {
 			ready := BridgeReady[c]
@@ -848,6 +897,9 @@ func PushResponse(reqID string, data map[string]interface{}) bool {
 		// 修复：使用 NewTimer 并在结束时主动清理，避免 time.After() 遗留过多导致内存泄漏
 		timer := time.NewTimer(PushResponseTimeout)
 		defer timer.Stop()
+		defer func() {
+			_ = recover()
+		}()
 
 		select {
 		case ch <- data:

@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -308,6 +309,22 @@ func (c *NativeClawClient) Connect() bool {
 	return false
 }
 
+func (c *NativeClawClient) isExpectedWSClose(err error) bool {
+	if err == nil {
+		return false
+	}
+	if c.ctx.Err() != nil {
+		return true
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+		return true
+	}
+	return strings.Contains(err.Error(), "use of closed network connection")
+}
+
 func (c *NativeClawClient) readLoop() {
 	defer func() {
 		c.conn.Close()
@@ -319,7 +336,9 @@ func (c *NativeClawClient) readLoop() {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			managerLogf("WS read error: %v", err)
+			if !c.isExpectedWSClose(err) {
+				managerLogf("WS read error: %v", err)
+			}
 			break
 		}
 
@@ -575,40 +594,75 @@ func (c *NativeClawClient) SendFileMessage(fileInfo map[string]interface{}, prom
 	return c.SendChatAndWaitReply(msgText, 180*time.Second, &deliver)
 }
 
-func (c *NativeClawClient) GetInstanceStatus() (status string, remainSec int) {
+func (c *NativeClawClient) GetInstanceStatus() (status string, remainSec int, err error) {
 	path := "/open-apis/user/mimo-claw/status"
-	resp, err := c.doAistudioReq("GET", path, nil, 5*time.Second, "")
-	if err != nil {
-		managerLogf("GetInstanceStatus failed: %v", err)
-		return "ERROR", 0
+	attempts := len(config.AistudioConnectIPs)
+	if attempts == 0 {
+		attempts = 1
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 401 {
-		return "EXPIRED(401)", 0
+	if attempts > 3 {
+		attempts = 3
 	}
 
-	var data map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return "ERROR", 0
-	}
-
-	if d, ok := data["data"].(map[string]interface{}); ok {
-		if st, ok := d["status"].(string); ok {
-			status = st
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		resolvedIP := getNextIP()
+		resp, reqErr := c.doAistudioReq("GET", path, nil, 5*time.Second, resolvedIP)
+		if reqErr != nil {
+			lastErr = fmt.Errorf("request via %s failed: %w", resolvedIP, reqErr)
+			managerLogf("GetInstanceStatus failed on %s: %v", resolvedIP, reqErr)
+			continue
 		}
-		if expireTimeRaw, ok := d["expireTime"].(float64); ok {
-			expireTime := int64(expireTimeRaw)
-			remainSec = int(expireTime/1000 - time.Now().Unix())
-			if remainSec < 0 {
+
+		func() {
+			defer resp.Body.Close()
+
+			if resp.StatusCode == 401 {
+				status = "EXPIRED(401)"
 				remainSec = 0
+				lastErr = nil
+				return
 			}
+
+			if resp.StatusCode >= 400 {
+				body, _ := io.ReadAll(resp.Body)
+				lastErr = fmt.Errorf("http %d via %s: %s", resp.StatusCode, resolvedIP, strings.TrimSpace(string(body)))
+				return
+			}
+
+			var data map[string]interface{}
+			if decodeErr := json.NewDecoder(resp.Body).Decode(&data); decodeErr != nil {
+				lastErr = fmt.Errorf("decode response via %s failed: %w", resolvedIP, decodeErr)
+				return
+			}
+
+			if d, ok := data["data"].(map[string]interface{}); ok {
+				if st, ok := d["status"].(string); ok {
+					status = st
+				}
+				if expireTimeRaw, ok := d["expireTime"].(float64); ok {
+					expireTime := int64(expireTimeRaw)
+					remainSec = int(expireTime/1000 - time.Now().Unix())
+					if remainSec < 0 {
+						remainSec = 0
+					}
+				}
+			}
+			if status == "" {
+				status = "UNKNOWN"
+			}
+			lastErr = nil
+		}()
+
+		if lastErr == nil {
+			return status, remainSec, nil
 		}
 	}
-	if status == "" {
-		status = "UNKNOWN"
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("status unavailable")
 	}
-	return status, remainSec
+	return "", 0, lastErr
 }
 
 func (c *NativeClawClient) DestroyClaw() bool {
@@ -622,15 +676,19 @@ func (c *NativeClawClient) DestroyClaw() bool {
 	defer resp.Body.Close()
 
 	var data map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&data)
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		managerLogf("DestroyClaw decode response failed: %v", err)
+		return false
+	}
 	if code, ok := data["code"].(float64); ok && code == 0 {
 		time.Sleep(3 * time.Second)
 		return true
 	}
+	managerLogf("DestroyClaw API error: code=%v msg=%v", data["code"], data["message"])
 	return false
 }
 
-func (c *NativeClawClient) CreateAndWait() bool {
+func (c *NativeClawClient) CreateAndWait() error {
 	escapedPH := url.QueryEscape(c.PH)
 
 	agreePath := fmt.Sprintf("/open-apis/agreement/user/mimo-claw?xiaomichatbot_ph=%s", escapedPH)
@@ -641,32 +699,51 @@ func (c *NativeClawClient) CreateAndWait() bool {
 	createPath := fmt.Sprintf("/open-apis/user/mimo-claw/create?xiaomichatbot_ph=%s", escapedPH)
 	resp, err := c.doAistudioReq("POST", createPath, nil, 20*time.Second, "")
 	if err != nil {
-		managerLogf("CreateClaw request failed: %v", err)
-		return false
+		return fmt.Errorf("create request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return false
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("create http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var data map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&data)
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return fmt.Errorf("decode create response failed: %w", err)
+	}
 	if code, ok := data["code"].(float64); !ok || code != 0 {
-		return false
+		return fmt.Errorf("create api error: code=%v msg=%v", data["code"], data["message"])
 	}
 
 	deadline := time.Now().Add(120 * time.Second)
+	lastStatus := ""
+	var lastErr error
 	for time.Now().Before(deadline) {
-		st, _ := c.GetInstanceStatus()
-		if st == "AVAILABLE" {
-			return true
+		st, _, err := c.GetInstanceStatus()
+		if err != nil {
+			lastErr = err
+			time.Sleep(2 * time.Second)
+			continue
 		}
-		if st == "DESTROYED" || st == "ERROR" {
-			return false
+		lastStatus = st
+		if st == "AVAILABLE" {
+			return nil
+		}
+		if st == "DESTROYED" || st == "CREATE_FAILED" || st == "EXPIRED(401)" {
+			return fmt.Errorf("instance entered terminal state %q while waiting for availability", st)
 		}
 		time.Sleep(2 * time.Second)
 	}
-	return false
+	if lastErr != nil && lastStatus != "" {
+		return fmt.Errorf("timed out after 120s waiting for AVAILABLE (last status=%s, last error=%v)", lastStatus, lastErr)
+	}
+	if lastErr != nil {
+		return fmt.Errorf("timed out after 120s waiting for AVAILABLE (last error=%v)", lastErr)
+	}
+	if lastStatus != "" {
+		return fmt.Errorf("timed out after 120s waiting for AVAILABLE (last status=%s)", lastStatus)
+	}
+	return fmt.Errorf("timed out after 120s waiting for AVAILABLE (no successful status response)")
 }
 
 func (c *NativeClawClient) TryShutdownInstance(status string) {
