@@ -890,8 +890,8 @@ func detectUnauthorizedResponse(statusCode int, body string) (int, string, bool)
 		return 0, "", false
 	}
 
-	if len(errMap) > 0 {
-		return http.StatusUnauthorized, "upstream_error_object", true
+	if code, ok := extractStatusCode(errMap); ok && code == http.StatusUnauthorized {
+		return http.StatusUnauthorized, "upstream_error_code_401", true
 	}
 	return 0, "", false
 }

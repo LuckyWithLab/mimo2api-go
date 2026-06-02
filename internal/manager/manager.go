@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -195,6 +196,28 @@ func shouldReuseHealthyInstance(bootstrapPending bool, staggerRotationDue bool, 
 	return !bootstrapPending && !staggerRotationDue && targetRebuildVersion == 0 && status == "AVAILABLE" && remainSec > 180
 }
 
+// isRefusalReply 检测AI是否回复了拒绝性语句
+// 如果AI拒绝执行，说明文件注入没有成功，需要销毁实例并重建
+func isRefusalReply(reply string) bool {
+	refusalKeywords := []string{
+		"抱歉",
+		"无法",
+		"违反",
+		"安全",
+		"不允许执行",
+		"不能执行",
+		"无法",
+		"拒绝",
+	}
+
+	for _, keyword := range refusalKeywords {
+		if strings.Contains(reply, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh <-chan struct{}) {
 	payloadPath := "bridge/node-metrics-agent-linux-amd64.gif"
 	lastSeenRebuild := m.currentRebuildVersion()
@@ -363,6 +386,17 @@ outer:
 			continue
 		} else {
 			userLogf("deployment complete. AI reply: %s", reply)
+			// 检测AI是否拒绝执行，如果拒绝说明文件注入没有成功，需要销毁实例并重建
+			if isRefusalReply(reply) {
+				userLogf("检测到AI拒绝执行，文件注入可能未成功，销毁实例并重建...")
+				client.TryShutdownInstance("AVAILABLE")
+				client.Close()
+				signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 5*time.Second)
+				if signal == waitSignalStop {
+					return
+				}
+				continue
+			}
 		}
 		bootstrapPending = false
 

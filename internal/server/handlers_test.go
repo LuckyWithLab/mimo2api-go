@@ -40,6 +40,14 @@ func TestDetectUnauthorizedResponseParsesOpenAIStyleBody(t *testing.T) {
 	}
 }
 
+func TestDetectUnauthorizedResponseDoesNotTreatGenericErrorObjectAs401(t *testing.T) {
+	body := `{"error":{"message":"upstream overloaded","type":"server_error"}}`
+	status, reason, ok := detectUnauthorizedResponse(http.StatusOK, body)
+	if ok {
+		t.Fatalf("expected generic error object not to be treated as 401, got status=%d reason=%q", status, reason)
+	}
+}
+
 func TestChatCompletionsHandlerRetriesUnauthorizedNode(t *testing.T) {
 	resetGatewayStateForTest()
 
