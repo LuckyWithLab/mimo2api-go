@@ -449,15 +449,12 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 	// Record request start
 	state.Metrics.RecordRequestStarted(routeKey, isStreaming)
 
-	var firstMsg map[string]interface{}
-	var queue chan map[string]interface{}
-	var targetWS *state.TunnelClient
-	var nodeKey string
-	var nodeReqID string
+	node401Cooldown := time.Duration(maxInt(config.Node401Cooldown, 1)) * time.Second
 	excludedNodes := make(map[*websocket.Conn]struct{}, maxNodeAttempts)
 
+attemptLoop:
 	for attempt := 1; attempt <= maxNodeAttempts; attempt++ {
-		targetWS = state.GetNextClientExcluding(excludedNodes)
+		targetWS := state.GetNextClientExcluding(excludedNodes)
 		if targetWS == nil {
 			statusCode = 503
 			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
@@ -471,14 +468,14 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 			return
 		}
 
-		nodeKey = targetWS.Host
-		nodeReqID = reqID
+		nodeKey := targetWS.Host
+		nodeReqID := reqID
 		if attempt > 1 {
 			nodeReqID = reqID + "-retry-" + strconv.Itoa(attempt)
 		}
 
 		state.Metrics.RecordAttemptStarted(nodeKey)
-		queue = state.CreatePendingRequest(targetWS.Conn, nodeReqID)
+		queue := state.CreatePendingRequest(targetWS.Conn, nodeReqID)
 
 		payload := map[string]interface{}{
 			"type":   "req",
@@ -512,6 +509,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 			return
 		}
 
+		var firstMsg map[string]interface{}
 		select {
 		case firstMsg = <-queue:
 			if firstMsg == nil {
@@ -550,171 +548,259 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 			return
 		}
 
-		break
-	}
-	defer state.CleanupPendingRequest(nodeReqID)
+		firstByteTime = time.Now()
+		ttftMs := float64(firstByteTime.Sub(startTime).Milliseconds())
 
-	firstByteTime = time.Now()
-	ttftMs := float64(firstByteTime.Sub(startTime).Milliseconds())
+		statusCode = 200
+		if s, ok := firstMsg["status"].(float64); ok {
+			statusCode = int(s)
+		}
 
-	statusCode = 200
-	if s, ok := firstMsg["status"].(float64); ok {
-		statusCode = int(s)
-	}
+		contentType, responseHeaders := normalizeResponseHeaders(firstMsg["headers"])
+		initialBody, _ := firstMsg["body"].(string)
+		firstMsgType, _ := firstMsg["type"].(string)
 
-	if statusCode >= 400 {
-		success = false
-		state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
-		state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
-		bodyStr, _ := firstMsg["body"].(string)
-		log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=upstream_error body=%s", reqID, nodeKey, routeKey, statusCode, time.Since(startTime).Milliseconds(), int64(ttftMs), bodyFingerprint(bodyStr))
-		c.String(statusCode, bodyStr)
-		return
-	}
-
-	contentType, responseHeaders := normalizeResponseHeaders(firstMsg["headers"])
-	applyResponseHeaders(c, responseHeaders)
-
-	if isStreaming {
-		c.Writer.Header().Set("Content-Type", "text/event-stream")
-		c.Writer.Header().Set("Cache-Control", "no-cache")
-		c.Writer.Header().Set("Connection", "keep-alive")
-	} else {
-		c.Writer.Header().Set("Content-Type", contentType)
-	}
-
-	flusher, _ := c.Writer.(http.Flusher)
-	var streamConv *converter.ResponsesStreamConverter
-	if isResponses {
-		streamConv = converter.NewResponsesStreamConverter(modelName)
-	}
-
-	clientGone := c.Request.Context().Done()
-
-	if !isStreaming {
-		rawBody, ok, clientCancelled := collectResponseBody(queue, clientGone, targetWS.Conn, reqID, nodeReqID, nodeKey, routeKey)
-		if !ok {
-			if clientCancelled {
-				statusCode = statusClientClosed
-				state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
-				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
-				log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=client_disconnected_nonstream", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), int64(ttftMs))
-				return
+		if authStatus, authReason, authDetected := detectUnauthorizedResponse(statusCode, initialBody); authDetected {
+			state.CleanupPendingRequest(nodeReqID)
+			state.Metrics.RecordAttemptFinished(nodeKey, authStatus, ttftMs, false)
+			state.CooldownClient(targetWS.Conn, node401Cooldown)
+			excludedNodes[targetWS.Conn] = struct{}{}
+			if attempt < maxNodeAttempts {
+				log.Printf("[WARN] req=%s node=%s route=%s attempt=%d/%d reason=%s cooldown=%ds retrying", reqID, nodeKey, routeKey, attempt, maxNodeAttempts, authReason, int(node401Cooldown/time.Second))
+				continue
 			}
-			statusCode = 502
-			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
-			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
-			log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=collect_response_failed", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs))
-			c.String(http.StatusBadGateway, "Gateway Error: 节点返回异常")
+
+			state.Metrics.RecordRequestFinished(routeKey, authStatus, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+			log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=%s body=%s", reqID, nodeKey, routeKey, authStatus, time.Since(startTime).Milliseconds(), int64(ttftMs), authReason, bodyFingerprint(initialBody))
+			applyResponseHeaders(c, responseHeaders)
+			c.Data(authStatus, contentType, []byte(initialBody))
 			return
 		}
-		success = true
-		durationMs := float64(time.Since(startTime).Milliseconds())
-		state.Metrics.RecordRequestFinished(routeKey, statusCode, durationMs, ttftMs, true)
-		state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, true)
 
-		// Try to extract usage from non-streaming response
-		var chatResp map[string]interface{}
-		if err := json.Unmarshal([]byte(rawBody), &chatResp); err == nil {
-			if usage, ok := chatResp["usage"].(map[string]interface{}); ok {
+		if statusCode >= 400 {
+			state.CleanupPendingRequest(nodeReqID)
+			success = false
+			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+			log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=upstream_error body=%s", reqID, nodeKey, routeKey, statusCode, time.Since(startTime).Milliseconds(), int64(ttftMs), bodyFingerprint(initialBody))
+			applyResponseHeaders(c, responseHeaders)
+			c.Data(statusCode, contentType, []byte(initialBody))
+			return
+		}
+
+		if firstMsgType == "finish" {
+			state.CleanupPendingRequest(nodeReqID)
+			durationMs := float64(time.Since(startTime).Milliseconds())
+			state.Metrics.RecordRequestFinished(routeKey, statusCode, durationMs, ttftMs, true)
+			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, true)
+			if usage, ok := firstMsg["usage"].(map[string]interface{}); ok {
 				state.Metrics.RecordUsage(routeKey, usage)
 			}
-		}
-
-		if isResponses {
-			var chatRespParsed map[string]interface{}
-			if err := json.Unmarshal([]byte(rawBody), &chatRespParsed); err != nil {
-				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=upstream_invalid_json err=%v body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), err, bodyFingerprint(rawBody))
-				c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "上游返回了非法 JSON"}})
+			if isStreaming {
+				applyResponseHeaders(c, responseHeaders)
+				c.Writer.Header().Set("Content-Type", "text/event-stream")
+				c.Writer.Header().Set("Cache-Control", "no-cache")
+				c.Writer.Header().Set("Connection", "keep-alive")
+				c.Status(statusCode)
 				return
 			}
-			c.JSON(statusCode, converter.ConvertResponsesResponse(chatRespParsed))
+
+			applyResponseHeaders(c, responseHeaders)
+			c.Writer.Header().Set("Content-Type", contentType)
+			c.Data(statusCode, contentType, []byte(initialBody))
 			return
 		}
-		c.Data(statusCode, contentType, []byte(rawBody))
-		return
-	}
 
-	// Streaming loop - track usage from finish message
-	var finishUsage map[string]interface{}
-	for {
-		var msg map[string]interface{}
-		var ok bool
-		select {
-		case msg, ok = <-queue:
+		clientGone := c.Request.Context().Done()
+		if !isStreaming {
+			rawBody, ok, clientCancelled := collectResponseBody(queue, clientGone, targetWS.Conn, reqID, nodeReqID, nodeKey, routeKey)
 			if !ok {
-				// Channel closed - record as failure if not already recorded
-				if !success {
-					statusCode = 502
+				state.CleanupPendingRequest(nodeReqID)
+				if clientCancelled {
+					statusCode = statusClientClosed
 					state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 					state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
-					state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
-					log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=stream_channel_closed", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs))
-				}
-				return
-			}
-		case <-clientGone:
-			state.SendCancelToNode(targetWS.Conn, reqID)
-			log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=client_disconnected", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds())
-			state.Metrics.RecordRequestFinished(routeKey, statusClientClosed, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
-			state.Metrics.RecordAttemptFinished(nodeKey, statusClientClosed, ttftMs, false)
-			return
-		case <-time.After(nodeResponseIdleTimeout):
-			statusCode = 504
-			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
-			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
-			state.SendCancelToNode(targetWS.Conn, reqID)
-			state.CooldownClient(targetWS.Conn, nodeTimeoutCooldown)
-			log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms ttft=%dms reason=stream_idle_timeout threshold=%ds", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), config.NodeResponseIdleTimeout)
-			return
-		}
-
-		msgType, ok := msg["type"].(string)
-		if !ok {
-			continue
-		}
-
-		if msgType == "finish" {
-			// Extract usage from finish message
-			if usage, ok := msg["usage"].(map[string]interface{}); ok {
-				finishUsage = usage
-			}
-
-			if isResponses && streamConv != nil {
-				var finalizeErr error
-				for _, ev := range streamConv.Finalize() {
-					if _, err := c.Writer.Write([]byte(ev)); err != nil {
-						state.SendCancelToNode(targetWS.Conn, reqID)
-						log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=finish_write_failed err=%v", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), err)
-						state.Metrics.RecordRequestFinished(routeKey, statusClientClosed, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
-						state.Metrics.RecordAttemptFinished(nodeKey, statusClientClosed, ttftMs, false)
-						finalizeErr = err
-						break
-					}
-				}
-				if finalizeErr != nil {
+					log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=client_disconnected_nonstream", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), int64(ttftMs))
 					return
 				}
-				if flusher != nil {
-					flusher.Flush()
-				}
+				statusCode = 502
+				state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=collect_response_failed", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs))
+				c.String(http.StatusBadGateway, "Gateway Error: 节点返回异常")
+				return
 			}
+
+			if authStatus, authReason, authDetected := detectUnauthorizedResponse(statusCode, rawBody); authDetected {
+				state.CleanupPendingRequest(nodeReqID)
+				state.Metrics.RecordAttemptFinished(nodeKey, authStatus, ttftMs, false)
+				state.CooldownClient(targetWS.Conn, node401Cooldown)
+				excludedNodes[targetWS.Conn] = struct{}{}
+				if attempt < maxNodeAttempts {
+					log.Printf("[WARN] req=%s node=%s route=%s attempt=%d/%d reason=%s cooldown=%ds retrying", reqID, nodeKey, routeKey, attempt, maxNodeAttempts, authReason, int(node401Cooldown/time.Second))
+					continue
+				}
+
+				state.Metrics.RecordRequestFinished(routeKey, authStatus, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+				log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=%s body=%s", reqID, nodeKey, routeKey, authStatus, time.Since(startTime).Milliseconds(), int64(ttftMs), authReason, bodyFingerprint(rawBody))
+				applyResponseHeaders(c, responseHeaders)
+				c.Data(authStatus, contentType, []byte(rawBody))
+				return
+			}
+
+			state.CleanupPendingRequest(nodeReqID)
+			applyResponseHeaders(c, responseHeaders)
+			c.Writer.Header().Set("Content-Type", contentType)
+
 			success = true
 			durationMs := float64(time.Since(startTime).Milliseconds())
 			state.Metrics.RecordRequestFinished(routeKey, statusCode, durationMs, ttftMs, true)
 			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, true)
-			if finishUsage != nil {
-				state.Metrics.RecordUsage(routeKey, finishUsage)
+
+			var chatResp map[string]interface{}
+			if err := json.Unmarshal([]byte(rawBody), &chatResp); err == nil {
+				if usage, ok := chatResp["usage"].(map[string]interface{}); ok {
+					state.Metrics.RecordUsage(routeKey, usage)
+				}
 			}
-			break
-		} else if msgType == "chunk" {
-			if bodyStr, ok := msg["body"].(string); ok {
-				// 优化：只有当字符串中实际包含 "usage" 字眼时，才去触发昂贵的 JSON 反序列化解析。
-				// 极大降低高频流式输出带来的 CPU 负担。
+
+			if isResponses {
+				var chatRespParsed map[string]interface{}
+				if err := json.Unmarshal([]byte(rawBody), &chatRespParsed); err != nil {
+					log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=upstream_invalid_json err=%v body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), err, bodyFingerprint(rawBody))
+					c.JSON(http.StatusBadGateway, gin.H{"error": gin.H{"message": "上游返回了非法 JSON"}})
+					return
+				}
+				c.JSON(statusCode, converter.ConvertResponsesResponse(chatRespParsed))
+				return
+			}
+			c.Data(statusCode, contentType, []byte(rawBody))
+			return
+		}
+
+		flusher, _ := c.Writer.(http.Flusher)
+		var streamConv *converter.ResponsesStreamConverter
+		if isResponses {
+			streamConv = converter.NewResponsesStreamConverter(modelName)
+		}
+
+		headersApplied := false
+		applyStreamHeaders := func() {
+			if headersApplied {
+				return
+			}
+			applyResponseHeaders(c, responseHeaders)
+			c.Writer.Header().Set("Content-Type", "text/event-stream")
+			c.Writer.Header().Set("Cache-Control", "no-cache")
+			c.Writer.Header().Set("Connection", "keep-alive")
+			headersApplied = true
+		}
+
+		streamHasWritten := false
+		var finishUsage map[string]interface{}
+		for {
+			var msg map[string]interface{}
+			var ok bool
+			select {
+			case msg, ok = <-queue:
+				if !ok {
+					state.CleanupPendingRequest(nodeReqID)
+					if !success {
+						statusCode = 502
+						state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+						state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+						state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
+						log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=stream_channel_closed", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs))
+					}
+					return
+				}
+			case <-clientGone:
+				state.SendCancelToNode(targetWS.Conn, nodeReqID)
+				state.CleanupPendingRequest(nodeReqID)
+				log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=client_disconnected", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds())
+				state.Metrics.RecordRequestFinished(routeKey, statusClientClosed, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+				state.Metrics.RecordAttemptFinished(nodeKey, statusClientClosed, ttftMs, false)
+				return
+			case <-time.After(nodeResponseIdleTimeout):
+				statusCode = 504
+				state.SendCancelToNode(targetWS.Conn, nodeReqID)
+				state.CleanupPendingRequest(nodeReqID)
+				state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+				state.CooldownClient(targetWS.Conn, nodeTimeoutCooldown)
+				log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms ttft=%dms reason=stream_idle_timeout threshold=%ds", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), config.NodeResponseIdleTimeout)
+				return
+			}
+
+			msgType, ok := msg["type"].(string)
+			if !ok {
+				continue
+			}
+
+			if msgType == "finish" {
+				if usage, ok := msg["usage"].(map[string]interface{}); ok {
+					finishUsage = usage
+				}
+
+				applyStreamHeaders()
+				if isResponses && streamConv != nil {
+					var finalizeErr error
+					for _, ev := range streamConv.Finalize() {
+						if _, err := c.Writer.Write([]byte(ev)); err != nil {
+							state.SendCancelToNode(targetWS.Conn, nodeReqID)
+							state.CleanupPendingRequest(nodeReqID)
+							log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=finish_write_failed err=%v", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), err)
+							state.Metrics.RecordRequestFinished(routeKey, statusClientClosed, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+							state.Metrics.RecordAttemptFinished(nodeKey, statusClientClosed, ttftMs, false)
+							finalizeErr = err
+							break
+						}
+					}
+					if finalizeErr != nil {
+						return
+					}
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
+				state.CleanupPendingRequest(nodeReqID)
+				success = true
+				durationMs := float64(time.Since(startTime).Milliseconds())
+				state.Metrics.RecordRequestFinished(routeKey, statusCode, durationMs, ttftMs, true)
+				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, true)
+				if finishUsage != nil {
+					state.Metrics.RecordUsage(routeKey, finishUsage)
+				}
+				return
+			}
+
+			if msgType == "chunk" {
+				bodyStr, ok := msg["body"].(string)
+				if !ok {
+					continue
+				}
+
+				if !streamHasWritten {
+					if authStatus, authReason, authDetected := detectUnauthorizedResponse(statusCode, bodyStr); authDetected {
+						state.CleanupPendingRequest(nodeReqID)
+						state.Metrics.RecordAttemptFinished(nodeKey, authStatus, ttftMs, false)
+						state.CooldownClient(targetWS.Conn, node401Cooldown)
+						excludedNodes[targetWS.Conn] = struct{}{}
+						if attempt < maxNodeAttempts {
+							log.Printf("[WARN] req=%s node=%s route=%s attempt=%d/%d reason=%s cooldown=%ds retrying", reqID, nodeKey, routeKey, attempt, maxNodeAttempts, authReason, int(node401Cooldown/time.Second))
+							continue attemptLoop
+						}
+
+						state.Metrics.RecordRequestFinished(routeKey, authStatus, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+						log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=%s body=%s", reqID, nodeKey, routeKey, authStatus, time.Since(startTime).Milliseconds(), int64(ttftMs), authReason, bodyFingerprint(bodyStr))
+						c.Data(authStatus, contentType, []byte(bodyStr))
+						return
+					}
+				}
+
 				if finishUsage == nil && !isResponses && strings.Contains(bodyStr, `"usage"`) {
 					var chunkData map[string]interface{}
 					if err := json.Unmarshal([]byte(bodyStr), &chunkData); err == nil {
-						// Check for SSE format: data: {...}
 						if dataStr, ok := chunkData["data"].(string); ok && dataStr != "[DONE]" {
 							var sseData map[string]interface{}
 							if err := json.Unmarshal([]byte(dataStr), &sseData); err == nil {
@@ -726,39 +812,48 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 					}
 				}
 
+				applyStreamHeaders()
 				if isResponses && streamConv != nil {
 					events := streamConv.ProcessChunk(bodyStr)
 					for _, ev := range events {
 						if _, err := c.Writer.Write([]byte(ev)); err != nil {
-							state.SendCancelToNode(targetWS.Conn, reqID)
+							state.SendCancelToNode(targetWS.Conn, nodeReqID)
+							state.CleanupPendingRequest(nodeReqID)
 							log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=stream_write_failed err=%v", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), err)
 							state.Metrics.RecordRequestFinished(routeKey, statusClientClosed, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 							state.Metrics.RecordAttemptFinished(nodeKey, statusClientClosed, ttftMs, false)
 							return
 						}
+						streamHasWritten = true
 					}
 				} else {
 					if _, err := c.Writer.Write([]byte(bodyStr)); err != nil {
-						state.SendCancelToNode(targetWS.Conn, reqID)
+						state.SendCancelToNode(targetWS.Conn, nodeReqID)
+						state.CleanupPendingRequest(nodeReqID)
 						log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=stream_write_failed err=%v", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), err)
 						state.Metrics.RecordRequestFinished(routeKey, statusClientClosed, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 						state.Metrics.RecordAttemptFinished(nodeKey, statusClientClosed, ttftMs, false)
 						return
 					}
+					streamHasWritten = true
 				}
 
-				if isStreaming && flusher != nil {
+				if flusher != nil {
 					flusher.Flush()
 				}
+				continue
 			}
-		} else if msgType == "error" {
-			statusCode = 502
-			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
-			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
-			state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
-			errBody, _ := msg["body"].(string)
-			log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), bodyFingerprint(errBody))
-			break
+
+			if msgType == "error" {
+				state.CleanupPendingRequest(nodeReqID)
+				statusCode = 502
+				state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+				state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
+				errBody, _ := msg["body"].(string)
+				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), bodyFingerprint(errBody))
+				return
+			}
 		}
 	}
 }
@@ -766,6 +861,73 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 func bodyFingerprint(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return "len=" + strconv.Itoa(len(s)) + " sha256=" + hex.EncodeToString(sum[:8])
+}
+
+func detectUnauthorizedResponse(statusCode int, body string) (int, string, bool) {
+	if statusCode == http.StatusUnauthorized {
+		return http.StatusUnauthorized, "upstream_status_401", true
+	}
+	if body == "" {
+		return 0, "", false
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return 0, "", false
+	}
+
+	if code, ok := extractStatusCode(payload); ok && code == http.StatusUnauthorized {
+		return http.StatusUnauthorized, "upstream_body_code_401", true
+	}
+
+	errValue, ok := payload["error"]
+	if !ok {
+		return 0, "", false
+	}
+
+	errMap, ok := errValue.(map[string]interface{})
+	if !ok {
+		return 0, "", false
+	}
+
+	if len(errMap) > 0 {
+		return http.StatusUnauthorized, "upstream_error_object", true
+	}
+	return 0, "", false
+}
+
+func extractStatusCode(data map[string]interface{}) (int, bool) {
+	for _, key := range []string{"status", "status_code", "code"} {
+		raw, ok := data[key]
+		if !ok {
+			continue
+		}
+		switch value := raw.(type) {
+		case float64:
+			return int(value), true
+		case int:
+			return value, true
+		case json.Number:
+			parsed, err := value.Int64()
+			if err == nil {
+				return int(parsed), true
+			}
+		case string:
+			trimmed := strings.TrimSpace(value)
+			parsed, err := strconv.Atoi(trimmed)
+			if err == nil {
+				return parsed, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func interfaceToString(value interface{}) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
 }
 
 type ModelDef struct {
@@ -853,7 +1015,17 @@ func WSTunnelHandler(c *gin.Context) {
 		return
 	}
 
-	state.RegisterClient(ws, c.ClientIP())
+	remoteIP := c.ClientIP()
+	nodeID := strings.TrimSpace(c.Query("node_id"))
+	nodeLabel := strings.TrimSpace(c.Query("node_label"))
+	hostLabel := remoteIP
+	if nodeLabel != "" {
+		hostLabel = nodeLabel
+	} else if nodeID != "" {
+		hostLabel = nodeID + "@" + remoteIP
+	}
+
+	state.RegisterClient(ws, hostLabel)
 	defer func() {
 		state.UnregisterClient(ws)
 		ws.Close()

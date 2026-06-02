@@ -702,6 +702,7 @@ func RegisterClient(ws *websocket.Conn, host string) {
 	ActiveList = append(ActiveList, ws)
 	WSToReqIDs[ws] = make(map[string]bool)
 	BridgeReady[ws] = true
+	log.Printf("[INFO] node=%s reason=ws_register active_clients=%d", host, len(ActiveList))
 }
 
 // SendCancelToNode sends a cancel message to the node for a given request.
@@ -813,6 +814,8 @@ func UnregisterClient(ws *websocket.Conn) {
 	} else {
 		CurrentClientIdx %= len(ActiveList)
 	}
+
+	log.Printf("[INFO] node=%s reason=ws_unregister active_clients=%d", host, len(ActiveList))
 }
 
 func GetNextClient() *TunnelClient {

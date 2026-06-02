@@ -185,6 +185,14 @@
             margin-bottom: 16px;
         }
 
+        .action-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+
         .btn {
             background: var(--primary);
             color: white;
@@ -202,6 +210,11 @@
 
         .btn:hover { background: var(--primary-hover); transform: translateY(-1px); }
         .btn:active { transform: translateY(0); }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
         
         .btn-danger { background: white; color: var(--danger); border: 1px solid #fca5a5; }
         .btn-danger:hover { background: #fef2f2; color: var(--danger-hover); border-color: #f87171; }
@@ -399,10 +412,13 @@
         <div class="glass-card">
             <div class="flex-between">
                 <h2 style="margin: 0; font-size: 18px;">Claw 运行账号管理</h2>
-                <button class="btn" onclick="openModal()">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                    导入凭证
-                </button>
+                <div class="action-group">
+                    <button id="rebuildBtn" class="btn btn-outline" onclick="triggerRebuild()">Rebuild</button>
+                    <button class="btn" onclick="openModal()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        导入凭证
+                    </button>
+                </div>
             </div>
             
             <div class="table-wrapper">
@@ -587,6 +603,31 @@
                 }
             } catch(e) {
                 showToast('网络请求异常', 'error');
+            }
+        }
+
+        async function triggerRebuild() {
+            const btn = document.getElementById('rebuildBtn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Rebuilding...';
+
+            try {
+                const res = await apiFetch('/api/rebuild', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message || '已发送 rebuild 请求');
+                    await fetchUsers();
+                } else {
+                    showToast(data.detail || data.message || 'rebuild 失败', 'error');
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') {
+                    showToast('rebuild 请求失败', 'error');
+                }
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
         }
 
