@@ -9,18 +9,27 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"mimo2api/internal/config"
 )
 
 // ─── 常量定义 ───
 
 const (
-	MaxConcurrentRequests = 16                      // 单个节点的最大并发请求数
-	MaxLatencySamples     = 2000                    // 延迟采样保留的最大数量
-	PendingQueueSize      = 100                     // 挂起队列的通道缓冲大小
-	PushResponseTimeout   = 1 * time.Second         // 推送响应的超时时间
-	NodeWriteTimeout      = 5 * time.Second         // 向节点下发请求/取消的写超时
-	MetricsSnapshotPath   = "gateway_snapshot.json" // 指标快照保存路径
+	DefaultMaxConcurrentRequests = 16                      // 单个节点的默认最大并发请求数
+	MaxLatencySamples            = 2000                    // 延迟采样保留的最大数量
+	PendingQueueSize             = 1000                    // 挂起队列的通道缓冲大小
+	PushResponseTimeout          = 1 * time.Second         // 推送响应的超时时间
+	NodeWriteTimeout             = 5 * time.Second         // 向节点下发请求/取消的写超时
+	MetricsSnapshotPath          = "gateway_snapshot.json" // 指标快照保存路径
 )
+
+func maxConcurrentRequests() int {
+	if config.MaxPendingPerClient > 0 {
+		return config.MaxPendingPerClient
+	}
+	return DefaultMaxConcurrentRequests
+}
 
 type TunnelClient struct {
 	Conn          *websocket.Conn
@@ -633,12 +642,13 @@ func GetAvailableClientsCount() int {
 
 	now := time.Now().Unix()
 	count := 0
+	maxPending := maxConcurrentRequests()
 	for _, ws := range ActiveList {
 		if tc, ok := ActiveClients[ws]; ok {
 			ready := BridgeReady[ws]
 			if ready && tc.CooldownUntil <= now && tc.BanUntil <= now {
 				reqIDs := WSToReqIDs[ws]
-				if len(reqIDs) < MaxConcurrentRequests {
+				if len(reqIDs) < maxPending {
 					count++
 				}
 			}
@@ -663,13 +673,14 @@ func GetActiveNodes() []ActiveNodeInfo {
 
 	now := time.Now().Unix()
 	result := []ActiveNodeInfo{}
+	maxPending := maxConcurrentRequests()
 	for i, ws := range ActiveList {
 		tc, ok := ActiveClients[ws]
 		if !ok {
 			continue
 		}
 		ready := BridgeReady[ws]
-		isAvailable := ready && tc.CooldownUntil <= now && tc.BanUntil <= now && len(WSToReqIDs[ws]) < MaxConcurrentRequests
+		isAvailable := ready && tc.CooldownUntil <= now && tc.BanUntil <= now && len(WSToReqIDs[ws]) < maxPending
 		result = append(result, ActiveNodeInfo{
 			Index:           i,
 			Host:            tc.Host,
@@ -836,6 +847,7 @@ func getNextClientLocked(excluded map[*websocket.Conn]struct{}) *TunnelClient {
 
 	CurrentClientIdx %= len(ActiveList)
 	now := time.Now().Unix()
+	maxPending := maxConcurrentRequests()
 
 	for i := 0; i < len(ActiveList); i++ {
 		c := ActiveList[CurrentClientIdx]
@@ -851,7 +863,7 @@ func getNextClientLocked(excluded map[*websocket.Conn]struct{}) *TunnelClient {
 			ready := BridgeReady[c]
 			// 修复：增加了对就绪状态和并发请求上限的校验
 			if ready && tc.CooldownUntil <= now && tc.BanUntil <= now {
-				if len(WSToReqIDs[c]) < MaxConcurrentRequests {
+				if len(WSToReqIDs[c]) < maxPending {
 					return tc
 				}
 			}

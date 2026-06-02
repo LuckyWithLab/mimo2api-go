@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"mimo2api/internal/config"
 )
 
 func resetClientStateForTest() {
@@ -118,5 +120,29 @@ func TestPushResponseClosedChannelDoesNotPanic(t *testing.T) {
 
 	if ok := PushResponse(reqID, map[string]interface{}{"type": "finish"}); ok {
 		t.Fatal("expected push to closed channel to fail")
+	}
+}
+
+func TestGetAvailableClientsCountRespectsConfiguredLimit(t *testing.T) {
+	resetClientStateForTest()
+
+	oldMaxPending := config.MaxPendingPerClient
+	config.MaxPendingPerClient = 2
+	defer func() {
+		config.MaxPendingPerClient = oldMaxPending
+	}()
+
+	ws := &websocket.Conn{}
+	RegisterClient(ws, "node-1")
+	WSToReqIDs[ws]["req-1"] = true
+
+	if got := GetAvailableClientsCount(); got != 1 {
+		t.Fatalf("expected node to remain available below configured limit, got %d", got)
+	}
+
+	WSToReqIDs[ws]["req-2"] = true
+
+	if got := GetAvailableClientsCount(); got != 0 {
+		t.Fatalf("expected node to become unavailable at configured limit, got %d", got)
 	}
 }

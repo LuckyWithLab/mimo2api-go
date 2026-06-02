@@ -24,6 +24,7 @@ var (
 	WebUICookieName         string
 	WebUISessionTTL         int
 	WebUICookieSecure       bool
+	MaxPendingPerClient     int
 	NodeResponseIdleTimeout int
 	Node401Cooldown         int
 	MetricsDBPath           string
@@ -68,6 +69,11 @@ func Load() {
 		WebUISessionTTL = 300
 	}
 	WebUICookieSecure = getEnvAsBool("MIMO_WEBUI_COOKIE_SECURE", false)
+
+	MaxPendingPerClient = getEnvAsInt("MIMO_MAX_PENDING_PER_CLIENT", 16)
+	if MaxPendingPerClient < 1 {
+		MaxPendingPerClient = 16
+	}
 
 	NodeResponseIdleTimeout = getEnvAsIntFromKeys([]string{
 		"MIMO_NODE_RESPONSE_IDLE_TIMEOUT",
