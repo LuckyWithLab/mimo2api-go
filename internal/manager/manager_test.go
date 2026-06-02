@@ -62,3 +62,21 @@ func TestWaitForSignalWakesOnBroadcastRebuild(t *testing.T) {
 		t.Fatalf("expected rebuild version 1, got %d", version)
 	}
 }
+
+func TestShouldReuseHealthyInstance(t *testing.T) {
+	if !shouldReuseHealthyInstance(false, false, 0, "AVAILABLE", 600) {
+		t.Fatal("expected healthy available instance to be reused")
+	}
+	if shouldReuseHealthyInstance(false, true, 0, "AVAILABLE", 600) {
+		t.Fatal("expected stagger rotation due to force rebuild instead of reuse")
+	}
+	if shouldReuseHealthyInstance(false, false, 1, "AVAILABLE", 600) {
+		t.Fatal("expected pending rebuild version to skip healthy reuse")
+	}
+	if shouldReuseHealthyInstance(true, false, 0, "AVAILABLE", 600) {
+		t.Fatal("expected bootstrap-pending instance to skip healthy reuse")
+	}
+	if shouldReuseHealthyInstance(false, false, 0, "AVAILABLE", 180) {
+		t.Fatal("expected near-expiry instance to skip healthy reuse")
+	}
+}

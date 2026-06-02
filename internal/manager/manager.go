@@ -191,10 +191,15 @@ func buildExecPrompt(user models.UserRecord) string {
 	)
 }
 
+func shouldReuseHealthyInstance(bootstrapPending bool, staggerRotationDue bool, targetRebuildVersion uint64, status string, remainSec int) bool {
+	return !bootstrapPending && !staggerRotationDue && targetRebuildVersion == 0 && status == "AVAILABLE" && remainSec > 180
+}
+
 func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh <-chan struct{}) {
 	payloadPath := "bridge/node-metrics-agent-linux-amd64.gif"
 	lastSeenRebuild := m.currentRebuildVersion()
 	bootstrapPending := false
+	staggerRotationDue := false
 	userLogf := func(format string, args ...interface{}) {
 		managerLogf("[manager:%s] %s", user.UserID, fmt.Sprintf(format, args...))
 	}
@@ -233,8 +238,9 @@ outer:
 		}
 		m.mu.Unlock()
 
-		// Only force a rebuild when a global rebuild is pending. Ordinary healthy instances just reuse their own cycle.
-		if !bootstrapPending && targetRebuildVersion == 0 && st == "AVAILABLE" && remainSec > 180 {
+		// Ordinary healthy instances reuse their current cycle, unless we've reached
+		// a previously scheduled staggered rotation point.
+		if shouldReuseHealthyInstance(bootstrapPending, staggerRotationDue, targetRebuildVersion, st, remainSec) {
 			waitTime := time.Duration(remainSec-120) * time.Second
 			userLogf("发现可用实例 (remain=%ds)，继续休眠 %v...", remainSec, waitTime)
 			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, waitTime)
@@ -264,6 +270,10 @@ outer:
 		if bootstrapPending && st == "AVAILABLE" {
 			userLogf("检测到待初始化的新实例 (remain=%ds)，继续完成连接与部署...", remainSec)
 		} else {
+			if staggerRotationDue && st == "AVAILABLE" {
+				userLogf("已到达错峰轮换时间点 (remain=%ds)，开始重建当前实例...", remainSec)
+			}
+			staggerRotationDue = false
 			if st != "DESTROYED" {
 				userLogf("正在销毁当前实例...")
 				client.TryShutdownInstance(st)
@@ -393,6 +403,9 @@ outer:
 		signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, waitTime)
 		if signal == waitSignalStop {
 			return
+		}
+		if signal == waitSignalExpired && waitOffset > 0 {
+			staggerRotationDue = true
 		}
 	}
 }
