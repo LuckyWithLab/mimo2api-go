@@ -67,6 +67,7 @@ func SetupRouter() *gin.Engine {
 		api.POST("/messages", ChatCompletionsHandler)
 		api.GET("/models", ModelsHandler)
 		api.POST("/responses", ResponsesHandler)
+		api.POST("/responses/compact", CompactResponsesHandler)
 	}
 
 	// Anthropic alias

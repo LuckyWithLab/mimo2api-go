@@ -306,6 +306,7 @@ func (c *NativeClawClient) Connect() bool {
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	managerLogf("hello-ok timeout for %s after 5s (WS connected but bridge did not reply)", c.UserID)
 	return false
 }
 

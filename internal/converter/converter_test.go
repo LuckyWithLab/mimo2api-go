@@ -192,6 +192,95 @@ func TestResponsesStreamConverterEmitsToolCallArgumentLifecycle(t *testing.T) {
 	}
 }
 
+func TestResponsesConvertRequestHandlesCompactInstructions(t *testing.T) {
+	req := map[string]interface{}{
+		"model":        "mimo-v2.5-pro",
+		"instructions": "Summarize the following conversation.",
+		"input": []interface{}{
+			map[string]interface{}{
+				"type":    "message",
+				"role":    "user",
+				"content": "Hello",
+			},
+			map[string]interface{}{
+				"type":    "message",
+				"role":    "assistant",
+				"content": "Hi there!",
+			},
+		},
+		"stream": false,
+	}
+
+	result, err := ResponsesConvertRequest(req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	messages, ok := result["messages"].([]map[string]interface{})
+	if !ok {
+		t.Fatalf("expected messages to be []map[string]interface{}, got %T", result["messages"])
+	}
+	if len(messages) != 3 {
+		t.Fatalf("expected 3 messages (system + 2 from input), got %d", len(messages))
+	}
+	if messages[0]["role"] != "system" {
+		t.Fatalf("expected first message to be system, got %q", messages[0]["role"])
+	}
+	if messages[0]["content"] != "Summarize the following conversation." {
+		t.Fatalf("expected system message content to be the instructions, got %q", messages[0]["content"])
+	}
+	if result["stream"] != false {
+		t.Fatalf("expected stream to be false, got %v", result["stream"])
+	}
+}
+
+func TestConvertResponsesResponseProducesValidCompactFormat(t *testing.T) {
+	chatResp := map[string]interface{}{
+		"model": "mimo-v2.5-pro",
+		"choices": []interface{}{
+			map[string]interface{}{
+				"message": map[string]interface{}{
+					"role":    "assistant",
+					"content": "Compacted summary of the conversation.",
+				},
+			},
+		},
+		"usage": map[string]interface{}{
+			"prompt_tokens":     100,
+			"completion_tokens": 50,
+			"total_tokens":      150,
+		},
+	}
+
+	resp := ConvertResponsesResponse(chatResp)
+
+	if resp["object"] != "response" {
+		t.Fatalf("expected object=response, got %v", resp["object"])
+	}
+	if resp["status"] != "completed" {
+		t.Fatalf("expected status=completed, got %v", resp["status"])
+	}
+	if resp["model"] != "mimo-v2.5-pro" {
+		t.Fatalf("expected model=mimo-v2.5-pro, got %v", resp["model"])
+	}
+
+	output, ok := resp["output"].([]interface{})
+	if !ok || len(output) == 0 {
+		t.Fatalf("expected non-empty output array, got %v", resp["output"])
+	}
+
+	usage, ok := resp["usage"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected usage map, got %T", resp["usage"])
+	}
+	if usage["input_tokens"] != 100 {
+		t.Fatalf("expected input_tokens=100, got %v", usage["input_tokens"])
+	}
+	if usage["output_tokens"] != 50 {
+		t.Fatalf("expected output_tokens=50, got %v", usage["output_tokens"])
+	}
+}
+
 func TestResponsesConvertRequestRejectsPreviousResponseID(t *testing.T) {
 	_, err := ResponsesConvertRequest(map[string]interface{}{
 		"model":                "mimo-test",

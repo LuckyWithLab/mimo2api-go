@@ -106,3 +106,97 @@ func TestRouterV1MessagesForwarding(t *testing.T) {
 		t.Error("timeout waiting for request to be forwarded via WS")
 	}
 }
+
+func TestRouterV1ResponsesCompactRouting(t *testing.T) {
+	oldAPIKeys := config.APIKeys
+	oldWSAuthToken := config.WSAuthToken
+	config.APIKeys = nil
+	config.WSAuthToken = ""
+	defer func() {
+		config.APIKeys = oldAPIKeys
+		config.WSAuthToken = oldWSAuthToken
+	}()
+
+	r := SetupRouter()
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http", "ws", 1) + "/ws"
+	dialer := websocket.Dialer{}
+	wsConn, _, err := dialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial websocket: %v", err)
+	}
+	defer wsConn.Close()
+
+	pathChan := make(chan string, 1)
+	bodyChan := make(chan string, 1)
+
+	go func() {
+		for {
+			var msg map[string]interface{}
+			if err := wsConn.ReadJSON(&msg); err != nil {
+				return
+			}
+			if msgType, ok := msg["type"].(string); ok && msgType == "req" {
+				if path, ok := msg["path"].(string); ok {
+					pathChan <- path
+				}
+				if body, ok := msg["body"].(string); ok {
+					bodyChan <- body
+				}
+				reqID, _ := msg["req_id"].(string)
+				_ = wsConn.WriteJSON(map[string]interface{}{
+					"type":   "finish",
+					"req_id": reqID,
+				})
+			}
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	reqBody := map[string]interface{}{
+		"model": "mimo-v2.5-pro",
+		"input": "Hello world",
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequest("POST", server.URL+"/v1/responses/compact", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("failed to do HTTP request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// 验证转发路径为 /v1/chat/completions
+	select {
+	case path := <-pathChan:
+		if path != "/v1/chat/completions" {
+			t.Errorf("expected path /v1/chat/completions, got %q", path)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("timeout waiting for request to be forwarded via WS")
+	}
+
+	// 验证 body 中包含 messages 且首条为 system 消息（压缩提示词）
+	select {
+	case body := <-bodyChan:
+		var parsed map[string]interface{}
+		json.Unmarshal([]byte(body), &parsed)
+		if _, ok := parsed["messages"]; !ok {
+			t.Error("expected messages field in forwarded body")
+		}
+		messages, ok := parsed["messages"].([]interface{})
+		if ok && len(messages) > 0 {
+			firstMsg := messages[0].(map[string]interface{})
+			if firstMsg["role"] != "system" {
+				t.Errorf("expected first message to be system, got %q", firstMsg["role"])
+			}
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("timeout waiting for body")
+	}
+}

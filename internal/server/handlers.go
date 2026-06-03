@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"bytes"
 	"io"
 	"log"
 	"net/http"
@@ -32,6 +33,14 @@ const (
 	nodeTimeoutCooldown = 120 * time.Second
 	maxNodeAttempts     = 2
 )
+
+const compactSystemPrompt = `You are a conversation compaction assistant. Your task is to produce a compacted summary of the following conversation. The summary must preserve all key information including:
+- Important facts, decisions, and conclusions
+- User preferences, constraints, and requirements
+- Pending action items or open questions
+- Critical context needed to continue the conversation seamlessly
+
+Output ONLY the compacted summary as a coherent, well-structured text. Do not include meta-commentary like "Here is the summary" — just provide the summary directly.`
 
 // ─── 全局缓存 ───
 var (
@@ -382,6 +391,55 @@ func ChatCompletionsHandler(c *gin.Context) {
 }
 
 func ResponsesHandler(c *gin.Context) {
+	commonCompletionsHandler(c, true)
+}
+
+func CompactResponsesHandler(c *gin.Context) {
+	bodyText, err := io.ReadAll(io.LimitReader(c.Request.Body, 10*1024*1024))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"message": "Failed to read request body"},
+		})
+		return
+	}
+
+	var reqData map[string]interface{}
+	if err := json.Unmarshal(bodyText, &reqData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"message": "Invalid JSON in request body"},
+		})
+		return
+	}
+
+	// model 是必填字段
+	if _, ok := reqData["model"].(string); !ok {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"message": "model is required"},
+		})
+		return
+	}
+
+	// input 为空时直接返回最小化响应
+	input := reqData["input"]
+	if input == nil {
+		resp := converter.ConvertResponsesResponse(map[string]interface{}{
+			"model":   reqData["model"],
+			"choices": []interface{}{},
+		})
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+
+	// 注入压缩系统提示词（通过 instructions 字段，ResponsesConvertRequest 会将其转为 system 消息）
+	reqData["instructions"] = compactSystemPrompt
+
+	// 强制非流式
+	reqData["stream"] = false
+
+	// 将修改后的 body 写回，供 commonCompletionsHandler 读取
+	modifiedBody, _ := json.Marshal(reqData)
+	c.Request.Body = io.NopCloser(bytes.NewReader(modifiedBody))
+
 	commonCompletionsHandler(c, true)
 }
 
