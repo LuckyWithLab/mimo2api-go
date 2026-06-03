@@ -168,11 +168,11 @@ func buildHistoryRows(bucketStart int64, currentSnap state.MetricsSnapshot, prev
 
 	for routeKey := range allRouteKeys {
 		curEntry := currentSnap.Routes[routeKey]
-		var prevEntry *state.RouteSnapshotEntry
+		var prevSnap snapshotFields // nil interface (not *T(nil) interface trap)
 		if p, ok := previousRoutes[routeKey]; ok {
-			prevEntry = &p
+			prevSnap = &p
 		}
-		routeDelta := subtractSnapshot(&curEntry, prevEntry)
+		routeDelta := subtractSnapshot(&curEntry, prevSnap)
 
 		rows = append(rows, HistoryRow{
 			ComponentType:     "route",

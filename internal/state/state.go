@@ -2,6 +2,7 @@ package state
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -869,6 +870,22 @@ func getNextClientLocked(excluded map[*websocket.Conn]struct{}) *TunnelClient {
 			}
 		}
 	}
+
+	// All nodes exhausted — log why each was skipped
+	var reasons []string
+	for _, c := range ActiveList {
+		tc, ok := ActiveClients[c]
+		if !ok {
+			continue
+		}
+		ready := BridgeReady[c]
+		pending := len(WSToReqIDs[c])
+		cdRemain := tc.CooldownUntil - now
+		banRemain := tc.BanUntil - now
+		r := fmt.Sprintf("%s[ready=%v cd=%ds ban=%ds pend=%d/%d]", tc.Host, ready, cdRemain, banRemain, pending, maxPending)
+		reasons = append(reasons, r)
+	}
+	log.Printf("[WARN] no_available_node: all %d nodes skipped: %v", len(ActiveList), reasons)
 	return nil
 }
 

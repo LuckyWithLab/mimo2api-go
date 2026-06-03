@@ -850,8 +850,8 @@ attemptLoop:
 				state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
 				state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
-				errBody, _ := msg["body"].(string)
-				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), bodyFingerprint(errBody))
+			errBody, _ := msg["body"].(string)
+			log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), errBody)
 				return
 			}
 		}

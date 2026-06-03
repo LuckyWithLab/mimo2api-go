@@ -9,3 +9,4 @@ gateway_snapshot.json
 .ai_memory
 *.gif
 target
+scripts/build-bridge.env
