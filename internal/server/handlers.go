@@ -1,10 +1,10 @@
 package server
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"bytes"
 	"io"
 	"log"
 	"net/http"
@@ -618,6 +618,20 @@ attemptLoop:
 		initialBody, _ := firstMsg["body"].(string)
 		firstMsgType, _ := firstMsg["type"].(string)
 
+		if firstMsgType == "error" {
+			state.CleanupPendingRequest(nodeReqID)
+			statusCode = http.StatusBadGateway
+			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
+			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+			state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
+			if initialBody == "" {
+				initialBody = "Gateway Error: 节点返回错误"
+			}
+			log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_first_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), initialBody)
+			c.String(http.StatusBadGateway, initialBody)
+			return
+		}
+
 		if authStatus, authReason, authDetected := detectUnauthorizedResponse(statusCode, initialBody); authDetected {
 			state.CleanupPendingRequest(nodeReqID)
 			state.Metrics.RecordAttemptFinished(nodeKey, authStatus, ttftMs, false)
@@ -908,8 +922,8 @@ attemptLoop:
 				state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
 				state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
-			errBody, _ := msg["body"].(string)
-			log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), errBody)
+				errBody, _ := msg["body"].(string)
+				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), errBody)
 				return
 			}
 		}

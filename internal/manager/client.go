@@ -260,23 +260,23 @@ func (c *NativeClawClient) getTicket(resolvedIP string) (string, error) {
 }
 
 func (c *NativeClawClient) Connect() bool {
-	var ticket string
-	var err error
-	var resolvedIP string
-
 	for i := 0; i < len(config.AistudioConnectIPs); i++ {
-		resolvedIP = getNextIP()
-		ticket, err = c.getTicket(resolvedIP)
-		if err == nil {
-			break
+		resolvedIP := getNextIP()
+		ticket, err := c.getTicket(resolvedIP)
+		if err != nil {
+			managerLogf("getTicket failed for user %s on %s: %v", c.UserID, resolvedIP, err)
+			continue
 		}
-		managerLogf("getTicket failed on %s: %v", resolvedIP, err)
+
+		if c.connectWS(resolvedIP, ticket) {
+			return true
+		}
 	}
 
-	if ticket == "" {
-		return false
-	}
+	return false
+}
 
+func (c *NativeClawClient) connectWS(resolvedIP, ticket string) bool {
 	dialer := getWSDialer(resolvedIP)
 	url := fmt.Sprintf("%s?ticket=%s", config.AistudioWSURL, ticket)
 
@@ -286,14 +286,14 @@ func (c *NativeClawClient) Connect() bool {
 
 	conn, _, err := dialer.DialContext(c.ctx, url, headers)
 	if err != nil {
-		managerLogf("WS connect failed on %s: %v", resolvedIP, err)
+		managerLogf("WS connect failed for user %s on %s: %v", c.UserID, resolvedIP, err)
 		return false
 	}
 
 	c.conn = conn
 	c.Connected = false
 
-	go c.readLoop()
+	go c.readLoop(conn)
 
 	// Wait for connection to be ready (hello-ok)
 	for i := 0; i < 50; i++ {
@@ -306,7 +306,8 @@ func (c *NativeClawClient) Connect() bool {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	managerLogf("hello-ok timeout for %s after 5s (WS connected but bridge did not reply)", c.UserID)
+	managerLogf("hello-ok timeout for user %s on %s after 5s (WS connected but claw did not reply)", c.UserID, resolvedIP)
+	conn.Close()
 	return false
 }
 
@@ -326,16 +327,18 @@ func (c *NativeClawClient) isExpectedWSClose(err error) bool {
 	return strings.Contains(err.Error(), "use of closed network connection")
 }
 
-func (c *NativeClawClient) readLoop() {
+func (c *NativeClawClient) readLoop(conn *websocket.Conn) {
 	defer func() {
-		c.conn.Close()
+		conn.Close()
 		c.mu.Lock()
-		c.Connected = false
+		if c.conn == conn {
+			c.Connected = false
+		}
 		c.mu.Unlock()
 	}()
 
 	for {
-		_, message, err := c.conn.ReadMessage()
+		_, message, err := conn.ReadMessage()
 		if err != nil {
 			if !c.isExpectedWSClose(err) {
 				managerLogf("WS read error: %v", err)
@@ -372,7 +375,7 @@ func (c *NativeClawClient) readLoop() {
 				"params": params,
 			}
 			reqBytes, _ := json.Marshal(reqMsg)
-			_ = c.conn.WriteMessage(websocket.TextMessage, reqBytes)
+			_ = conn.WriteMessage(websocket.TextMessage, reqBytes)
 		} else if msg.Type == "res" {
 			c.responses[msg.ID] = msg
 			if msg.OK != nil && *msg.OK {
