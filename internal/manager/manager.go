@@ -390,7 +390,8 @@ outer:
 			if isRefusalReply(reply) {
 				userLogf("检测到AI拒绝执行，文件注入可能未成功，销毁实例并重建...")
 				client.TryShutdownInstance("AVAILABLE")
-				client.Close()
+				client = NewNativeClawClient(user)
+				client.DestroyClaw()
 				signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 5*time.Second)
 				if signal == waitSignalStop {
 					return
