@@ -184,3 +184,266 @@ func serveNodeResponse(t *testing.T, wsConn *websocket.Conn, body string) {
 		return
 	}
 }
+
+func TestWriteErrorResponseFormats(t *testing.T) {
+	resetGatewayStateForTest()
+
+	oldAPIKeys := config.APIKeys
+	config.APIKeys = nil
+	t.Cleanup(func() {
+		config.APIKeys = oldAPIKeys
+		resetGatewayStateForTest()
+	})
+
+	r := SetupRouter()
+
+	// Case 1: OpenAI endpoint
+	req1, _ := http.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(`{"model":"test"}`))
+	req1.Header.Set("Content-Type", "application/json")
+	w1 := httptest.NewRecorder()
+	r.ServeHTTP(w1, req1)
+
+	if w1.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", w1.Code)
+	}
+
+	var errResp1 map[string]interface{}
+	if err := json.Unmarshal(w1.Body.Bytes(), &errResp1); err != nil {
+		t.Fatalf("failed to unmarshal OpenAI error: %v", err)
+	}
+	errObj1, ok := errResp1["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected OpenAI error response structure, got %s", w1.Body.String())
+	}
+	if errObj1["message"] != "Gateway Error: 没有可用的内网节点" {
+		t.Fatalf("unexpected error message: %v", errObj1["message"])
+	}
+	if errObj1["type"] != "gateway_error" {
+		t.Fatalf("unexpected error type: %v", errObj1["type"])
+	}
+
+	// Case 2: Anthropic endpoint
+	req2, _ := http.NewRequest("POST", "/anthropic/v1/messages", bytes.NewBufferString(`{"model":"test"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status 503, got %d", w2.Code)
+	}
+
+	var errResp2 map[string]interface{}
+	if err := json.Unmarshal(w2.Body.Bytes(), &errResp2); err != nil {
+		t.Fatalf("failed to unmarshal Anthropic error: %v", err)
+	}
+	if errResp2["type"] != "error" {
+		t.Fatalf("expected Anthropic error response structure, got %s", w2.Body.String())
+	}
+	errObj2, ok := errResp2["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected Anthropic error field, got %s", w2.Body.String())
+	}
+	if errObj2["message"] != "Gateway Error: 没有可用的内网节点" {
+		t.Fatalf("unexpected error message: %v", errObj2["message"])
+	}
+	if errObj2["type"] != "api_error" {
+		t.Fatalf("unexpected error type: %v", errObj2["type"])
+	}
+}
+
+func TestChatCompletionsHandlerNodeErrorAndChannelClosed(t *testing.T) {
+	resetGatewayStateForTest()
+
+	oldAPIKeys := config.APIKeys
+	oldWSAuthToken := config.WSAuthToken
+	oldNodeResponseIdleTimeout := config.NodeResponseIdleTimeout
+	config.APIKeys = nil
+	config.WSAuthToken = ""
+	config.NodeResponseIdleTimeout = 5
+	t.Cleanup(func() {
+		config.APIKeys = oldAPIKeys
+		config.WSAuthToken = oldWSAuthToken
+		config.NodeResponseIdleTimeout = oldNodeResponseIdleTimeout
+		resetGatewayStateForTest()
+	})
+
+	r := SetupRouter()
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	wsBaseURL := strings.Replace(server.URL, "http", "ws", 1) + "/ws"
+
+	// Case 1: Node returns error message (non-streaming)
+	t.Run("node_error_non_streaming", func(t *testing.T) {
+		resetGatewayStateForTest()
+		node := dialTestNode(t, wsBaseURL+"?node_label=node-err")
+		defer node.Close()
+
+		go func() {
+			for {
+				var msg map[string]interface{}
+				if err := node.ReadJSON(&msg); err != nil {
+					return
+				}
+				if msgType, _ := msg["type"].(string); msgType != "req" {
+					continue
+				}
+				reqID, _ := msg["req_id"].(string)
+				// Start message
+				_ = node.WriteJSON(map[string]interface{}{
+					"type":   "start",
+					"req_id": reqID,
+					"status": http.StatusOK,
+					"headers": map[string]string{
+						"Content-Type": "application/json",
+					},
+				})
+				// Send error message
+				_ = node.WriteJSON(map[string]interface{}{
+					"type":   "error",
+					"req_id": reqID,
+					"body":   "Upstream node failure description",
+				})
+				return
+			}
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+
+		reqBody := map[string]interface{}{
+			"model":  "mimo-v2.5",
+			"stream": false,
+			"messages": []map[string]string{
+				{"role": "user", "content": "hello"},
+			},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+		resp, err := http.Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			t.Fatalf("failed to post: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("expected status 502, got %d", resp.StatusCode)
+		}
+
+		var errResp map[string]interface{}
+		_ = json.NewDecoder(resp.Body).Decode(&errResp)
+		errObj, _ := errResp["error"].(map[string]interface{})
+		if errObj["message"] != "Upstream node failure description" {
+			t.Fatalf("expected error message from node, got %v", errObj["message"])
+		}
+	})
+
+	// Case 2: Node channel closed unexpectedly (non-streaming)
+	t.Run("node_channel_closed", func(t *testing.T) {
+		resetGatewayStateForTest()
+		node := dialTestNode(t, wsBaseURL+"?node_label=node-close")
+
+		go func() {
+			for {
+				var msg map[string]interface{}
+				if err := node.ReadJSON(&msg); err != nil {
+					return
+				}
+				if msgType, _ := msg["type"].(string); msgType != "req" {
+					continue
+				}
+				// Close WS connection immediately to simulate crash
+				node.Close()
+				return
+			}
+		}()
+
+		time.Sleep(50 * time.Millisecond)
+
+		reqBody := map[string]interface{}{
+			"model":  "mimo-v2.5",
+			"stream": false,
+			"messages": []map[string]string{
+				{"role": "user", "content": "hello"},
+			},
+		}
+		bodyBytes, _ := json.Marshal(reqBody)
+		resp, err := http.Post(server.URL+"/v1/chat/completions", "application/json", bytes.NewBuffer(bodyBytes))
+		if err != nil {
+			t.Fatalf("failed to post: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusGatewayTimeout && resp.StatusCode != http.StatusBadGateway {
+			t.Fatalf("expected error status code 502/504, got %d", resp.StatusCode)
+		}
+	})
+}
+
+func TestAPIAuthMiddlewareFormats(t *testing.T) {
+	resetGatewayStateForTest()
+
+	oldAPIKeys := config.APIKeys
+	config.APIKeys = []string{"valid-key"}
+	t.Cleanup(func() {
+		config.APIKeys = oldAPIKeys
+		resetGatewayStateForTest()
+	})
+
+	r := SetupRouter()
+
+	// Case 1: OpenAI endpoint unauthorized
+	req1, _ := http.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(`{"model":"test"}`))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set("Authorization", "Bearer invalid-key")
+	w1 := httptest.NewRecorder()
+	r.ServeHTTP(w1, req1)
+
+	if w1.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", w1.Code)
+	}
+
+	var errResp1 map[string]interface{}
+	if err := json.Unmarshal(w1.Body.Bytes(), &errResp1); err != nil {
+		t.Fatalf("failed to unmarshal OpenAI auth error: %v", err)
+	}
+	errObj1, ok := errResp1["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected OpenAI error response structure, got %s", w1.Body.String())
+	}
+	if errObj1["message"] != "Invalid API Key" {
+		t.Fatalf("unexpected error message: %v", errObj1["message"])
+	}
+	if errObj1["type"] != "invalid_request_error" {
+		t.Fatalf("unexpected error type: %v", errObj1["type"])
+	}
+
+	// Case 2: Anthropic endpoint unauthorized
+	req2, _ := http.NewRequest("POST", "/anthropic/v1/messages", bytes.NewBufferString(`{"model":"test"}`))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("x-api-key", "invalid-key")
+	w2 := httptest.NewRecorder()
+	r.ServeHTTP(w2, req2)
+
+	if w2.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status 401, got %d", w2.Code)
+	}
+
+	var errResp2 map[string]interface{}
+	if err := json.Unmarshal(w2.Body.Bytes(), &errResp2); err != nil {
+		t.Fatalf("failed to unmarshal Anthropic auth error: %v", err)
+	}
+	if errResp2["type"] != "error" {
+		t.Fatalf("expected Anthropic error response structure, got %s", w2.Body.String())
+	}
+	errObj2, ok := errResp2["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected Anthropic error field, got %s", w2.Body.String())
+	}
+	if errObj2["message"] != "Invalid API Key" {
+		t.Fatalf("unexpected error message: %v", errObj2["message"])
+	}
+	if errObj2["type"] != "authentication_error" {
+		t.Fatalf("unexpected error type: %v", errObj2["type"])
+	}
+}
+
+

@@ -107,8 +107,24 @@ func APIAuthMiddleware() gin.HandlerFunc {
 		}
 
 		if !valid {
+			path := c.Request.URL.Path
+			if strings.HasPrefix(path, "/anthropic/") || path == "/v1/messages" {
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"type": "error",
+					"error": gin.H{
+						"type":    "authentication_error",
+						"message": "Invalid API Key",
+					},
+				})
+				return
+			}
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
-				"error": map[string]string{"message": "Invalid API Key"},
+				"error": gin.H{
+					"message": "Invalid API Key",
+					"type":    "invalid_request_error",
+					"param":   nil,
+					"code":    nil,
+				},
 			})
 			return
 		}

@@ -27,6 +27,7 @@ var (
 	MaxPendingPerClient     int
 	NodeResponseIdleTimeout int
 	Node401Cooldown         int
+	KeepAliveIntervalSeconds int
 	MetricsDBPath           string
 	MetricsRetentionDays    int
 	MetricsBucketSeconds    int
@@ -80,6 +81,10 @@ func Load() {
 		"MIMO_BRIDGE_IDLE_TIMEOUT",
 	}, 90)
 	Node401Cooldown = getEnvAsInt("MIMO_NODE_401_COOLDOWN_SECONDS", 3600)
+	KeepAliveIntervalSeconds = getEnvAsInt("MIMO_KEEPALIVE_INTERVAL", 15)
+	if KeepAliveIntervalSeconds < 5 {
+		KeepAliveIntervalSeconds = 5
+	}
 	MetricsDBPath = getEnv("MIMO_METRICS_DB_PATH", "gateway_metrics.db")
 	MetricsRetentionDays = getEnvAsInt("MIMO_METRICS_RETENTION_DAYS", 90)
 	MetricsBucketSeconds = getEnvAsInt("MIMO_METRICS_BUCKET_SECONDS", 1800)
