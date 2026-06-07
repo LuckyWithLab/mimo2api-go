@@ -23,6 +23,7 @@ import (
 	"mimo2api/internal/converter"
 	"mimo2api/internal/manager"
 	"mimo2api/internal/metrics"
+	"mimo2api/internal/models"
 	"mimo2api/internal/state"
 )
 
@@ -698,6 +699,16 @@ attemptLoop:
 		}
 
 		if statusCode >= 400 {
+			// 500/502 服务器错误时，排除当前节点并尝试其他节点
+			if (statusCode == 500 || statusCode == 502) && !responseCommitted {
+				excludedNodes[targetWS.Conn] = struct{}{}
+				if attempt < maxNodeAttempts {
+					state.CleanupPendingRequest(nodeReqID)
+					state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+					log.Printf("[WARN] req=%s node=%s route=%s attempt=%d/%d status=%d reason=upstream_error retrying", reqID, nodeKey, routeKey, attempt, maxNodeAttempts, statusCode)
+					continue attemptLoop
+				}
+			}
 			state.CleanupPendingRequest(nodeReqID)
 			success = false
 			state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
@@ -721,15 +732,25 @@ attemptLoop:
 				state.Metrics.RecordUsage(routeKey, usage)
 			}
 			if isStreaming {
+				log.Printf("[WARN] req=%s node=%s route=%s reason=stream_finish_no_data body_len=%d", reqID, nodeKey, routeKey, len(initialBody))
 				applyResponseHeaders(c, responseHeaders)
 				c.Writer.Header().Set("Content-Type", "text/event-stream")
 				c.Writer.Header().Set("Cache-Control", "no-cache")
 				c.Writer.Header().Set("Connection", "keep-alive")
 				c.Writer.Header().Set("X-Accel-Buffering", "no")
 				c.Status(statusCode)
+				if initialBody != "" {
+					_, _ = c.Writer.Write([]byte(initialBody))
+					if flusher != nil {
+						flusher.Flush()
+					}
+				}
 				return
 			}
 
+			if initialBody == "" {
+				log.Printf("[WARN] req=%s node=%s route=%s reason=empty_body_nonstream", reqID, nodeKey, routeKey)
+			}
 			applyResponseHeaders(c, responseHeaders)
 			c.Writer.Header().Set("Content-Type", contentType)
 			c.Data(statusCode, contentType, []byte(initialBody))
@@ -778,6 +799,11 @@ attemptLoop:
 			}
 
 			state.CleanupPendingRequest(nodeReqID)
+
+			if rawBody == "" {
+				log.Printf("[WARN] req=%s node=%s route=%s reason=empty_raw_body_nonstream", reqID, nodeKey, routeKey)
+			}
+
 			applyResponseHeaders(c, responseHeaders)
 			c.Writer.Header().Set("Content-Type", contentType)
 
@@ -1045,7 +1071,7 @@ func writeErrorResponse(c *gin.Context, statusCode int, errMsg string) {
 			"message": errMsg,
 			"type":    "gateway_error",
 			"param":   nil,
-			"code":    nil,
+			"code":    "gateway_error",
 		},
 	})
 }
@@ -1135,28 +1161,9 @@ func interfaceToString(value interface{}) string {
 	return ""
 }
 
-type ModelDef struct {
-	ID        string
-	Name      string
-	Context   int
-	MaxTokens int
-}
-
-var Models = []ModelDef{
-	{"mimo-v2.5-pro", "MiMo V2.5 Pro", 1048576, 131072},
-	{"mimo-v2.5", "MiMo V2.5", 1048576, 131072},
-	{"mimo-v2.5-tts", "MiMo V2.5 TTS", 8192, 8192},
-	{"mimo-v2-pro", "MiMo V2 Pro", 1048576, 131072},
-	{"mimo-v2-flash", "MiMo V2 Flash", 256000, 131072},
-	{"mimo-v2-omni", "MiMo V2 Omni", 256000, 131072},
-	{"mimo-v2.5-tts-voicedesign", "MiMo V2.5 TTS VoiceDesign", 8192, 8192},
-	{"mimo-v2.5-tts-voiceclone", "MiMo V2.5 TTS VoiceClone", 8192, 8192},
-	{"mimo-v2-tts", "MiMo V2 TTS", 8192, 8192},
-}
-
 func ModelsHandler(c *gin.Context) {
 	var data []interface{}
-	for _, m := range Models {
+	for _, m := range models.Models {
 		data = append(data, map[string]interface{}{
 			"id":             m.ID,
 			"object":         "model",
@@ -1174,7 +1181,7 @@ func ModelsHandler(c *gin.Context) {
 
 func AnthropicModelsHandler(c *gin.Context) {
 	var data []interface{}
-	for _, m := range Models {
+	for _, m := range models.Models {
 		data = append(data, map[string]interface{}{
 			"id":               m.ID,
 			"display_name":     m.Name,
@@ -1187,8 +1194,8 @@ func AnthropicModelsHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data":     data,
 		"has_more": false,
-		"first_id": Models[0].ID,
-		"last_id":  Models[len(Models)-1].ID,
+		"first_id": models.Models[0].ID,
+		"last_id":  models.Models[len(models.Models)-1].ID,
 	})
 }
 

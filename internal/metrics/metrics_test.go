@@ -2,7 +2,9 @@ package metrics
 
 import (
 	"database/sql"
+	"path/filepath"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -179,5 +181,62 @@ func TestBuildHistoryRowsCalculatesGatewayAndRouteDeltas(t *testing.T) {
 	}
 	if routeRow.AvgLatencyMs != 70 || routeRow.SuccessRate != 66.67 || routeRow.Status != "major_outage" {
 		t.Fatalf("unexpected route aggregates: %#v", routeRow)
+	}
+}
+
+func TestGetStatusHistoryPreservesKnownModelRoutesAndCollapsesOther(t *testing.T) {
+	resetMetricsStateForTest()
+
+	previousDB := db
+	if err := InitDB(filepath.Join(t.TempDir(), "metrics.db")); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	testDB := db
+	t.Cleanup(func() {
+		_ = testDB.Close()
+		db = previousDB
+	})
+
+	bucketStart := time.Now().Unix()/int64(BucketSeconds)*int64(BucketSeconds) - int64(BucketSeconds)
+	rows := []HistoryRow{
+		{ComponentType: "route", ComponentKey: "mimo-v2.5", BucketStart: bucketStart, RequestsTotal: 1, RequestsSucceeded: 1, RequestsFailed: 0, SuccessRate: 100, AvgLatencyMs: 100, Status: "operational"},
+		{ComponentType: "route", ComponentKey: "MiMo-v2.5-pro", BucketStart: bucketStart, RequestsTotal: 2, RequestsSucceeded: 1, RequestsFailed: 1, SuccessRate: 50, AvgLatencyMs: 50, Status: "major_outage"},
+		{ComponentType: "route", ComponentKey: "gpt-4o", BucketStart: bucketStart, RequestsTotal: 4, RequestsSucceeded: 4, RequestsFailed: 0, SuccessRate: 100, AvgLatencyMs: 25, Status: "operational"},
+	}
+	if err := writeHistoryRows(rows); err != nil {
+		t.Fatalf("write history rows: %v", err)
+	}
+
+	data, err := GetStatusHistory(1)
+	if err != nil {
+		t.Fatalf("get status history: %v", err)
+	}
+
+	components := data["components"].([]StatusHistoryComponent)
+	var routeComponents []StatusHistoryComponent
+	for _, comp := range components {
+		if comp.ComponentType == "route" {
+			routeComponents = append(routeComponents, comp)
+		}
+	}
+	if len(routeComponents) != 3 {
+		t.Fatalf("expected 2 model route components plus other, got %d: %#v", len(routeComponents), routeComponents)
+	}
+
+	byKey := make(map[string]StatusHistoryComponent, len(routeComponents))
+	for _, comp := range routeComponents {
+		byKey[comp.ComponentKey] = comp
+	}
+	mimo25Comp := byKey["mimo-v2.5"]
+	if mimo25Comp.Summary["requests_total"] != 1 || mimo25Comp.Summary["requests_succeeded"] != 1 || mimo25Comp.UptimePercentage != 100 {
+		t.Fatalf("unexpected mimo-v2.5 history component: %#v", mimo25Comp)
+	}
+	mimoProComp := byKey["mimo-v2.5-pro"]
+	if mimoProComp.Summary["requests_total"] != 2 || mimoProComp.Summary["requests_succeeded"] != 1 || mimoProComp.UptimePercentage != 50 {
+		t.Fatalf("unexpected mimo-v2.5-pro history component: %#v", mimoProComp)
+	}
+	otherComp := byKey[state.RouteMetricsOther]
+	if otherComp.Summary["requests_total"] != 4 || otherComp.Summary["requests_succeeded"] != 4 || otherComp.UptimePercentage != 100 {
+		t.Fatalf("unexpected other history component: %#v", otherComp)
 	}
 }

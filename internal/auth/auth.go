@@ -123,7 +123,7 @@ func APIAuthMiddleware() gin.HandlerFunc {
 					"message": "Invalid API Key",
 					"type":    "invalid_request_error",
 					"param":   nil,
-					"code":    nil,
+					"code":    "invalid_api_key",
 				},
 			})
 			return

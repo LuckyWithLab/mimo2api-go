@@ -320,6 +320,34 @@ type StatusHistoryComponent struct {
 	Summary          map[string]int64     `json:"summary"`
 }
 
+func appendOrMergeHistoryPoint(comp *StatusHistoryComponent, point StatusHistoryPoint) {
+	for i := range comp.Points {
+		existing := &comp.Points[i]
+		if existing.BucketStart != point.BucketStart {
+			continue
+		}
+
+		oldTotal := existing.RequestsTotal
+		newTotal := oldTotal + point.RequestsTotal
+		latencySum := existing.AvgLatencyMs*float64(oldTotal) + point.AvgLatencyMs*float64(point.RequestsTotal)
+
+		existing.RequestsTotal = newTotal
+		existing.RequestsSucceeded += point.RequestsSucceeded
+		existing.RequestsFailed += point.RequestsFailed
+		if newTotal > 0 {
+			existing.SuccessRate = roundTo2(float64(existing.RequestsSucceeded) / float64(newTotal) * 100)
+			existing.AvgLatencyMs = roundTo2(latencySum / float64(newTotal))
+		} else {
+			existing.SuccessRate = 0
+			existing.AvgLatencyMs = 0
+		}
+		existing.Status = classifyComponentStatus(newTotal, existing.SuccessRate)
+		return
+	}
+
+	comp.Points = append(comp.Points, point)
+}
+
 func GetStatusHistory(hours int) (map[string]interface{}, error) {
 	if db == nil {
 		return map[string]interface{}{
@@ -388,6 +416,9 @@ func GetStatusHistory(hours int) (map[string]interface{}, error) {
 		if err := rows.Scan(&componentType, &componentKey, &bucketStart, &requestsTotal, &requestsSucceeded, &requestsFailed, &successRate, &avgLatencyMs, &status); err != nil {
 			continue
 		}
+		if componentType == "route" {
+			componentKey = state.NormalizeMetricsRouteKey(componentKey)
+		}
 
 		compKey := componentType + "|" + componentKey
 		comp, ok := components[compKey]
@@ -406,7 +437,7 @@ func GetStatusHistory(hours int) (map[string]interface{}, error) {
 			components[compKey] = comp
 		}
 
-		comp.Points = append(comp.Points, StatusHistoryPoint{
+		appendOrMergeHistoryPoint(comp, StatusHistoryPoint{
 			BucketStart:       bucketStart,
 			BucketEnd:         bucketStart + int64(BucketSeconds),
 			Status:            status,

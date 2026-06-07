@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"mimo2api/internal/config"
+	"mimo2api/internal/models"
 )
 
 // ─── 常量定义 ───
@@ -23,6 +24,7 @@ const (
 	PushResponseTimeout          = 1 * time.Second         // 推送响应的超时时间
 	NodeWriteTimeout             = 5 * time.Second         // 向节点下发请求/取消的写超时
 	MetricsSnapshotPath          = "gateway_snapshot.json" // 指标快照保存路径
+	RouteMetricsOther            = "other"
 )
 
 func maxConcurrentRequests() int {
@@ -137,6 +139,8 @@ var Metrics = &GatewayMetrics{
 // ─── GatewayMetrics 方法 ───
 
 func (gm *GatewayMetrics) RecordRequestStarted(routeKey string, isStreaming bool) {
+	routeKey = normalizeMetricsRouteKey(routeKey)
+
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
 
@@ -186,6 +190,8 @@ func (gm *GatewayMetrics) RecordAttemptFinished(nodeKey string, statusCode int, 
 }
 
 func (gm *GatewayMetrics) RecordRequestFinished(routeKey string, statusCode int, durationMs float64, firstByteLatencyMs float64, success bool) {
+	routeKey = normalizeMetricsRouteKey(routeKey)
+
 	gm.mu.Lock()
 	defer gm.mu.Unlock()
 
@@ -218,6 +224,8 @@ func (gm *GatewayMetrics) RecordUsage(routeKey string, usage map[string]interfac
 	if usage == nil {
 		return
 	}
+	routeKey = normalizeMetricsRouteKey(routeKey)
+
 	promptTokens := int64FromUsage(usage, "prompt_tokens", "input_tokens")
 	completionTokens := int64FromUsage(usage, "completion_tokens", "output_tokens")
 	totalTokens := int64FromUsage(usage, "total_tokens")
@@ -258,12 +266,15 @@ func (gm *GatewayMetrics) CaptureSnapshot() MetricsSnapshot {
 	}
 
 	for k, v := range gm.Routes {
-		snap.Routes[k] = RouteSnapshotEntry{
+		routeKey := normalizeMetricsRouteKey(k)
+		entry := snap.Routes[routeKey]
+		mergeRouteSnapshotEntry(&entry, RouteSnapshotEntry{
 			RequestsTotal:       v.RequestsTotal,
 			RequestsSucceeded:   v.RequestsSucceeded,
 			RequestsFailed:      v.RequestsFailed,
 			RequestLatencySumMs: v.RequestLatencySumMs,
-		}
+		})
+		snap.Routes[routeKey] = entry
 	}
 
 	return snap
@@ -401,22 +412,10 @@ func (gm *GatewayMetrics) SaveSnapshot() {
 		Nodes:  make(map[string]nodeSnap),
 	}
 	for k, v := range gm.Routes {
-		data.Routes[k] = routeSnap{
-			RequestsTotal:        v.RequestsTotal,
-			RequestsSucceeded:    v.RequestsSucceeded,
-			RequestsFailed:       v.RequestsFailed,
-			StreamingRequests:    v.StreamingRequests,
-			NonStreamingRequests: v.NonStreamingRequests,
-			LatencySumMs:         v.RequestLatencySumMs,
-			FirstByteLatSumMs:    v.RequestFirstByteLatencySumMs,
-			StatusCodes:          copyMapInt64(v.StatusCodes),
-			Tokens: tokenSnapshot{
-				RequestsWithUsage: v.Tokens.RequestsWithUsage,
-				PromptTokens:      v.Tokens.PromptTokens,
-				CompletionTokens:  v.Tokens.CompletionTokens,
-				TotalTokens:       v.Tokens.TotalTokens,
-			},
-		}
+		routeKey := normalizeMetricsRouteKey(k)
+		merged := newRouteMetricsFromSnap(data.Routes[routeKey])
+		mergeRouteMetrics(merged, v)
+		data.Routes[routeKey] = routeSnapFromMetrics(merged)
 	}
 	for k, v := range gm.Nodes {
 		data.Nodes[k] = nodeSnap{
@@ -472,25 +471,13 @@ func (gm *GatewayMetrics) LoadSnapshot() bool {
 		CompletionTokens:  data.Tokens.CompletionTokens,
 		TotalTokens:       data.Tokens.TotalTokens,
 	}
+	gm.Routes = make(map[string]*RouteMetrics)
 	for k, v := range data.Routes {
-		rm := &RouteMetrics{
-			RequestsTotal:                v.RequestsTotal,
-			RequestsSucceeded:            v.RequestsSucceeded,
-			RequestsFailed:               v.RequestsFailed,
-			StreamingRequests:            v.StreamingRequests,
-			NonStreamingRequests:         v.NonStreamingRequests,
-			RequestLatencySumMs:          v.LatencySumMs,
-			RequestFirstByteLatencySumMs: v.FirstByteLatSumMs,
-			StatusCodes:                  v.StatusCodes,
-			Tokens: TokenMetrics{
-				RequestsWithUsage: v.Tokens.RequestsWithUsage,
-				PromptTokens:      v.Tokens.PromptTokens,
-				CompletionTokens:  v.Tokens.CompletionTokens,
-				TotalTokens:       v.Tokens.TotalTokens,
-			},
-		}
-		gm.Routes[k] = rm
+		routeKey := normalizeMetricsRouteKey(k)
+		rm := gm.ensureRouteMetrics(routeKey)
+		mergeRouteMetrics(rm, newRouteMetricsFromSnap(v))
 	}
+	gm.Nodes = make(map[string]*NodeMetrics)
 	for k, v := range data.Nodes {
 		nm := &NodeMetrics{
 			AttemptsTotal:         v.AttemptsTotal,
@@ -518,21 +505,102 @@ func cloneMetricsSnapshot(snap *MetricsSnapshot) *MetricsSnapshot {
 		Routes:     make(map[string]RouteSnapshotEntry, len(snap.Routes)),
 	}
 	for k, v := range snap.Routes {
-		cloned.Routes[k] = v
+		routeKey := normalizeMetricsRouteKey(k)
+		entry := cloned.Routes[routeKey]
+		mergeRouteSnapshotEntry(&entry, v)
+		cloned.Routes[routeKey] = entry
 	}
 	return cloned
 }
 
 // ─── 内部辅助方法 ───
 
-func (gm *GatewayMetrics) ensureRouteMetrics(routeKey string) *RouteMetrics {
-	if rm, ok := gm.Routes[routeKey]; ok {
-		return rm
+func NormalizeMetricsRouteKey(routeKey string) string {
+	if modelID, ok := models.CanonicalModelID(routeKey); ok {
+		return modelID
 	}
-	rm := &RouteMetrics{
+	return RouteMetricsOther
+}
+
+func normalizeMetricsRouteKey(routeKey string) string {
+	return NormalizeMetricsRouteKey(routeKey)
+}
+
+func mergeRouteSnapshotEntry(dst *RouteSnapshotEntry, src RouteSnapshotEntry) {
+	dst.RequestsTotal += src.RequestsTotal
+	dst.RequestsSucceeded += src.RequestsSucceeded
+	dst.RequestsFailed += src.RequestsFailed
+	dst.RequestLatencySumMs += src.RequestLatencySumMs
+}
+
+func mergeRouteMetrics(dst *RouteMetrics, src *RouteMetrics) {
+	dst.RequestsTotal += src.RequestsTotal
+	dst.RequestsSucceeded += src.RequestsSucceeded
+	dst.RequestsFailed += src.RequestsFailed
+	dst.StreamingRequests += src.StreamingRequests
+	dst.NonStreamingRequests += src.NonStreamingRequests
+	dst.RequestLatencySumMs += src.RequestLatencySumMs
+	dst.RequestFirstByteLatencySumMs += src.RequestFirstByteLatencySumMs
+	for code, count := range src.StatusCodes {
+		dst.StatusCodes[code] += count
+	}
+	dst.Tokens.RequestsWithUsage += src.Tokens.RequestsWithUsage
+	dst.Tokens.PromptTokens += src.Tokens.PromptTokens
+	dst.Tokens.CompletionTokens += src.Tokens.CompletionTokens
+	dst.Tokens.TotalTokens += src.Tokens.TotalTokens
+}
+
+func newEmptyRouteMetrics() *RouteMetrics {
+	return &RouteMetrics{
 		StatusCodes: make(map[string]int64),
 		Tokens:      TokenMetrics{},
 	}
+}
+
+func newRouteMetricsFromSnap(snap routeSnap) *RouteMetrics {
+	return &RouteMetrics{
+		RequestsTotal:                snap.RequestsTotal,
+		RequestsSucceeded:            snap.RequestsSucceeded,
+		RequestsFailed:               snap.RequestsFailed,
+		StreamingRequests:            snap.StreamingRequests,
+		NonStreamingRequests:         snap.NonStreamingRequests,
+		RequestLatencySumMs:          snap.LatencySumMs,
+		RequestFirstByteLatencySumMs: snap.FirstByteLatSumMs,
+		StatusCodes:                  copyMapInt64(snap.StatusCodes),
+		Tokens: TokenMetrics{
+			RequestsWithUsage: snap.Tokens.RequestsWithUsage,
+			PromptTokens:      snap.Tokens.PromptTokens,
+			CompletionTokens:  snap.Tokens.CompletionTokens,
+			TotalTokens:       snap.Tokens.TotalTokens,
+		},
+	}
+}
+
+func routeSnapFromMetrics(metrics *RouteMetrics) routeSnap {
+	return routeSnap{
+		RequestsTotal:        metrics.RequestsTotal,
+		RequestsSucceeded:    metrics.RequestsSucceeded,
+		RequestsFailed:       metrics.RequestsFailed,
+		StreamingRequests:    metrics.StreamingRequests,
+		NonStreamingRequests: metrics.NonStreamingRequests,
+		LatencySumMs:         metrics.RequestLatencySumMs,
+		FirstByteLatSumMs:    metrics.RequestFirstByteLatencySumMs,
+		StatusCodes:          copyMapInt64(metrics.StatusCodes),
+		Tokens: tokenSnapshot{
+			RequestsWithUsage: metrics.Tokens.RequestsWithUsage,
+			PromptTokens:      metrics.Tokens.PromptTokens,
+			CompletionTokens:  metrics.Tokens.CompletionTokens,
+			TotalTokens:       metrics.Tokens.TotalTokens,
+		},
+	}
+}
+
+func (gm *GatewayMetrics) ensureRouteMetrics(routeKey string) *RouteMetrics {
+	routeKey = normalizeMetricsRouteKey(routeKey)
+	if rm, ok := gm.Routes[routeKey]; ok {
+		return rm
+	}
+	rm := newEmptyRouteMetrics()
 	gm.Routes[routeKey] = rm
 	return rm
 }
@@ -585,12 +653,15 @@ func copyMapInt64(m map[string]int64) map[string]int64 {
 }
 
 func copyRoutes(m map[string]*RouteMetrics) map[string]*RouteMetrics {
-	result := make(map[string]*RouteMetrics, len(m))
+	result := make(map[string]*RouteMetrics, 2)
 	for k, v := range m {
-		r := *v // 结构体浅拷贝
-		r.StatusCodes = copyMapInt64(v.StatusCodes)
-		r.Tokens = v.Tokens
-		result[k] = &r
+		routeKey := normalizeMetricsRouteKey(k)
+		r, ok := result[routeKey]
+		if !ok {
+			r = newEmptyRouteMetrics()
+			result[routeKey] = r
+		}
+		mergeRouteMetrics(r, v)
 	}
 	return result
 }

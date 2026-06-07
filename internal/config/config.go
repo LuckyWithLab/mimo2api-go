@@ -10,34 +10,34 @@ import (
 )
 
 var (
-	ServerHost              string
-	ServerPort              int
-	GinMode                 string
-	TrustedProxies          []string
-	ManagerLogPath          string
-	ShutdownTaskTimeout     int
-	APIKeys                 []string
-	WSAuthToken             string
-	WebUIUsername           string
-	WebUIPassword           string
-	WebUISecretKey          string
-	WebUICookieName         string
-	WebUISessionTTL         int
-	WebUICookieSecure       bool
-	MaxPendingPerClient     int
-	NodeResponseIdleTimeout int
-	Node401Cooldown         int
+	ServerHost               string
+	ServerPort               int
+	GinMode                  string
+	TrustedProxies           []string
+	ManagerLogPath           string
+	ShutdownTaskTimeout      int
+	APIKeys                  []string
+	WSAuthToken              string
+	WebUIUsername            string
+	WebUIPassword            string
+	WebUISecretKey           string
+	WebUICookieName          string
+	WebUISessionTTL          int
+	WebUICookieSecure        bool
+	MaxPendingPerClient      int
+	NodeResponseIdleTimeout  int
+	Node401Cooldown          int
 	KeepAliveIntervalSeconds int
-	MetricsDBPath           string
-	MetricsRetentionDays    int
-	MetricsBucketSeconds    int
-	AistudioConnectIPs      []string
-	AistudioHost            = "aistudio.xiaomimimo.com"
-	AistudioBaseURL         = "https://aistudio.xiaomimimo.com"
-	AistudioWSURL           = "wss://aistudio.xiaomimimo.com/ws/proxy"
-	MimoProbePrompt         string
-	MimoExecPrompt          string
-	MimoFileMetadataPrompt  string
+	MetricsDBPath            string
+	MetricsRetentionDays     int
+	MetricsBucketSeconds     int
+	AistudioConnectIPs       []string
+	AistudioHost             = "aistudio.xiaomimimo.com"
+	AistudioBaseURL          = "https://aistudio.xiaomimimo.com"
+	AistudioWSURL            = "wss://aistudio.xiaomimimo.com/ws/proxy"
+	MimoProbePrompt          string
+	MimoExecPrompt           string
+	MimoFileMetadataPrompt   string
 )
 
 func Load() {
@@ -81,7 +81,7 @@ func Load() {
 		"MIMO_BRIDGE_IDLE_TIMEOUT",
 	}, 90)
 	Node401Cooldown = getEnvAsInt("MIMO_NODE_401_COOLDOWN_SECONDS", 3600)
-	KeepAliveIntervalSeconds = getEnvAsInt("MIMO_KEEPALIVE_INTERVAL", 15)
+	KeepAliveIntervalSeconds = getEnvAsInt("MIMO_KEEPALIVE_INTERVAL", 50)
 	if KeepAliveIntervalSeconds < 5 {
 		KeepAliveIntervalSeconds = 5
 	}
