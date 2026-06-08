@@ -15,6 +15,12 @@ func SetupRouter() *gin.Engine {
 	if err := r.SetTrustedProxies(config.TrustedProxies); err != nil {
 		log.Printf("Invalid trusted proxies config: %v", err)
 	}
+	if err := auth.LoadOAuthKeyStore(config.OAuthDBPath, config.OAuthKeyStorePath); err != nil {
+		if config.OAuthClientID != "" && config.OAuthClientSecret != "" {
+			log.Fatalf("OAuth is configured but key store failed to load: %v", err)
+		}
+		log.Printf("Failed to load OAuth key store (OAuth not configured, ignoring): %v", err)
+	}
 
 	// CORS middleware
 	r.Use(func(c *gin.Context) {
@@ -35,10 +41,14 @@ func SetupRouter() *gin.Engine {
 
 	uiAPI := r.Group("/api")
 	{
-		// Public endpoints (no auth required, matching Python WEBUI_PUBLIC_PATHS)
 		uiAPI.POST("/auth/login", auth.LoginHandler)
 		uiAPI.POST("/auth/logout", auth.LogoutHandler)
 		uiAPI.GET("/auth/session", auth.SessionHandler)
+		uiAPI.GET("/oauth/login", auth.OAuthLoginHandler)
+		uiAPI.GET("/oauth/callback", auth.OAuthCallbackHandler)
+		uiAPI.GET("/oauth/me", auth.OAuthMeHandler)
+		uiAPI.POST("/oauth/me/rotate", auth.OAuthMeRotateKeyHandler)
+		uiAPI.POST("/oauth/me/logout", auth.OAuthMeLogoutHandler)
 		uiAPI.GET("/system/status", SystemStatusHandler)
 		uiAPI.GET("/stats", StatsHandler)
 		uiAPI.GET("/status/history", StatusHistoryHandler)
@@ -51,6 +61,8 @@ func SetupRouter() *gin.Engine {
 			protected.GET("/users/list", UsersListHandler)
 			protected.POST("/users/add", UsersAddHandler)
 			protected.DELETE("/users/delete/:id", UsersDeleteHandler)
+			protected.GET("/oauth/users", auth.OAuthUsersHandler)
+			protected.POST("/oauth/users/rotate", auth.OAuthRotateKeyHandler)
 
 			protected.GET("/model_mapping", ModelMappingHandler)
 			protected.PUT("/model_mapping", PutModelMappingHandler)

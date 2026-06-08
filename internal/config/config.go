@@ -10,20 +10,32 @@ import (
 )
 
 var (
-	ServerHost               string
-	ServerPort               int
-	GinMode                  string
-	TrustedProxies           []string
-	ManagerLogPath           string
-	ShutdownTaskTimeout      int
-	APIKeys                  []string
-	WSAuthToken              string
-	WebUIUsername            string
-	WebUIPassword            string
-	WebUISecretKey           string
-	WebUICookieName          string
-	WebUISessionTTL          int
-	WebUICookieSecure        bool
+	ServerHost          string
+	ServerPort          int
+	GinMode             string
+	TrustedProxies      []string
+	ManagerLogPath      string
+	ShutdownTaskTimeout int
+	APIKeys             []string
+	WSAuthToken         string
+	WebUIUsername       string
+	WebUIPassword       string
+	WebUISecretKey      string
+	WebUICookieName     string
+	WebUISessionTTL     int
+	WebUICookieSecure   bool
+	// OAuth
+	OAuthClientID         string
+	OAuthClientSecret     string
+	OAuthRedirectURI      string
+	OAuthScopes           string
+	OAuthAuthorizationURL string
+	OAuthTokenURL         string
+	OAuthUserURL          string
+	OAuthStateCookieName  string
+	OAuthDBPath           string
+	OAuthKeyStorePath     string
+
 	MaxPendingPerClient      int
 	NodeResponseIdleTimeout  int
 	Node401Cooldown          int
@@ -70,6 +82,17 @@ func Load() {
 		WebUISessionTTL = 300
 	}
 	WebUICookieSecure = getEnvAsBool("MIMO_WEBUI_COOKIE_SECURE", false)
+
+	OAuthClientID = getFirstEnv([]string{"MIMO_OAUTH_CLIENT_ID", "LINUX_DO_CLIENT_ID"}, "")
+	OAuthClientSecret = getFirstEnv([]string{"MIMO_OAUTH_CLIENT_SECRET", "LINUX_DO_CLIENT_SECRET"}, "")
+	OAuthRedirectURI = getFirstEnv([]string{"MIMO_OAUTH_REDIRECT_URI", "LINUX_DO_REDIRECT_URI"}, "")
+	OAuthScopes = getFirstEnv([]string{"MIMO_OAUTH_SCOPES", "LINUX_DO_OAUTH_SCOPES"}, "")
+	OAuthAuthorizationURL = getEnv("MIMO_OAUTH_AUTHORIZATION_URL", "https://connect.linux.do/oauth2/authorize")
+	OAuthTokenURL = getEnv("MIMO_OAUTH_TOKEN_URL", "https://connect.linux.do/oauth2/token")
+	OAuthUserURL = getEnv("MIMO_OAUTH_USER_URL", "https://connect.linux.do/api/user")
+	OAuthStateCookieName = getEnv("MIMO_OAUTH_STATE_COOKIE_NAME", "mimo_oauth_state")
+	OAuthDBPath = getEnv("MIMO_OAUTH_DB_PATH", "oauth_keys.db")
+	OAuthKeyStorePath = getEnv("MIMO_OAUTH_KEY_STORE_PATH", "oauth_keys.json")
 
 	MaxPendingPerClient = getEnvAsInt("MIMO_MAX_PENDING_PER_CLIENT", 16)
 	if MaxPendingPerClient < 1 {
@@ -153,14 +176,6 @@ func getEnvAsIntFromKeys(keys []string, defaultVal int) int {
 		return defaultVal
 	}
 	return val
-}
-
-func getEnvAsSlice(key string, defaultVal []string) []string {
-	valStr := getEnv(key, "")
-	if valStr == "" {
-		return defaultVal
-	}
-	return parseSlice(valStr)
 }
 
 func getEnvAsSliceFromKeys(keys []string, defaultVal []string) []string {

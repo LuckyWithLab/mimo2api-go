@@ -1,69 +1,200 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mimo2 控制面板</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
     <style>
         :root {
-            --primary: #4F46E5;
-            --primary-hover: #4338CA;
-            --danger: #EF4444;
-            --danger-hover: #DC2626;
-            --bg-color: #F3F4F6;
-            --card-bg: rgba(255, 255, 255, 0.75);
-            --card-border: rgba(255, 255, 255, 0.4);
-            --text-main: #111827;
-            --text-muted: #6B7280;
-            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-            --radius-md: 12px;
-            --radius-lg: 16px;
+            --bg-color: #f4f6f5;
+            --card-bg: #ffffff;
+            --card-border: #cbd5e1;
+            --card-border-light: #e2e8f0;
+            --text-main: #1b2a24;
+            --text-muted: #3d5248;
+            --text-dim: #708a7e;
+            --primary: #1b4d3e;
+            --primary-hover: #246b56;
+            --primary-glow: rgba(27, 77, 62, 0.12);
+            --danger: #e11d48;
+            --danger-hover: #be123c;
+            --danger-glow: rgba(225, 29, 72, 0.12);
+            --success: #16a34a;
+            --warning: #ca8a04;
+            --radius-md: 10px;
+            --radius-lg: 12px;
+            --transition: all 0.2s ease-in-out;
+        }
+
+        * {
+            box-sizing: border-box;
         }
 
         body {
             margin: 0;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: linear-gradient(135deg, #e0e7ff 0%, #f3f4f6 100%);
+            font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
             color: var(--text-main);
             min-height: 100vh;
             display: flex;
             flex-direction: column;
             align-items: center;
             padding: 40px 20px;
-            box-sizing: border-box;
+            -webkit-font-smoothing: antialiased;
         }
 
         .container {
             width: 100%;
-            max-width: 900px;
+            max-width: 960px;
             display: flex;
             flex-direction: column;
             gap: 24px;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
 
         .hidden {
             display: none !important;
         }
 
-        .auth-shell {
-            width: 100%;
-            max-width: 460px;
+        /* 苹果风卡片 */
+        .glass-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border-light);
+            border-radius: var(--radius-lg);
+            padding: 24px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03), 0 1px 3px rgba(0, 0, 0, 0.02);
+            transition: var(--transition);
         }
 
+        .glass-card:hover {
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.05), 0 2px 6px rgba(0, 0, 0, 0.03);
+        }
+
+        /* 登录框 */
+        .auth-shell {
+            width: 100%;
+            max-width: 420px;
+            margin-top: 10vh;
+            animation: slideUp 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        @keyframes slideUp {
+            from {
+                opacity: 0;
+                transform: translateY(24px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .login-title {
+            margin: 0 0 8px 0;
+            font-size: 26px;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            color: var(--text-main);
+            text-align: center;
+        }
+
+        .login-copy {
+            margin: 0 0 28px 0;
+            color: var(--text-dim);
+            line-height: 1.5;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .auth-form {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-label {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--text-muted);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .text-input {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-md);
+            background: #ffffff;
+            color: var(--text-main);
+            font-size: 14px;
+            font-family: inherit;
+            transition: var(--transition);
+        }
+
+        .text-input:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+
+        /* Header 样式 */
         .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 8px;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .brand-section {
+            display: flex;
+            align-items: center;
             gap: 12px;
         }
 
-        .header h1 {
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: var(--primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+
+        .brand-name {
             margin: 0;
-            font-size: 28px;
-            font-weight: 600;
-            color: #1e1b4b;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: -0.3px;
+            color: var(--text-main);
         }
 
         .header-meta {
@@ -71,205 +202,323 @@
             align-items: center;
             gap: 10px;
             flex-wrap: wrap;
-            justify-content: flex-end;
         }
 
         .badge {
-            padding: 8px 12px;
-            border-radius: 999px;
+            padding: 4px 10px;
+            border-radius: 6px;
             font-size: 12px;
             font-weight: 600;
-            background: rgba(255, 255, 255, 0.7);
-            color: #3730A3;
-            border: 1px solid rgba(79, 70, 229, 0.15);
+            background: #f2f2f7;
+            color: var(--text-muted);
+            border: 1px solid #e5e5ea;
+            display: flex;
+            align-items: center;
+            gap: 5px;
         }
 
         .badge.warn {
-            color: #92400E;
-            border-color: rgba(245, 158, 11, 0.25);
+            color: var(--danger);
+            background: #ffe9e9;
+            border-color: #ffd1d1;
         }
 
-        .glass-card {
-            background: var(--card-bg);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid var(--card-border);
-            border-radius: var(--radius-lg);
-            padding: 24px;
-            box-shadow: var(--shadow);
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        .badge.success {
+            color: #1e7e34;
+            background: #e6f4ea;
+            border-color: #ceead6;
         }
 
-        .glass-card:hover {
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -2px rgba(0, 0, 0, 0.025);
-        }
-
+        /* 状态卡片 */
         .status-container {
             display: flex;
             align-items: center;
-            gap: 16px;
+            justify-content: space-between;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .status-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
         .status-indicator {
-            width: 14px;
-            height: 14px;
-            background: #10B981;
+            width: 10px;
+            height: 10px;
+            background: var(--success);
             border-radius: 50%;
-            box-shadow: 0 0 10px #10B981;
-            animation: pulse 2s infinite;
         }
 
         .status-indicator.offline {
-            background: #EF4444;
-            box-shadow: 0 0 10px #EF4444;
-            animation: none;
+            background: var(--danger);
         }
 
-        @keyframes pulse {
-            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-            70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        .status-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--text-main);
         }
 
-        .status-text {
-            font-size: 18px;
-            font-weight: 500;
-        }
-
-        .status-subtext {
+        .status-desc {
+            font-size: 13px;
             color: var(--text-muted);
-            font-size: 14px;
-            margin-top: 4px;
+            margin-top: 2px;
         }
 
-        .login-title {
-            margin: 0 0 8px 0;
-            font-size: 28px;
-            font-weight: 600;
-            color: #1e1b4b;
-        }
-
-        .login-copy {
-            margin: 0 0 24px 0;
-            color: var(--text-muted);
-            line-height: 1.6;
-        }
-
-        .auth-form {
-            display: flex;
-            flex-direction: column;
-            gap: 14px;
-        }
-
-        .text-input {
-            width: 100%;
-            padding: 12px 14px;
-            border: 1px solid rgba(99, 102, 241, 0.18);
-            border-radius: 12px;
-            background: rgba(255, 255, 255, 0.9);
-            font-size: 14px;
-            box-sizing: border-box;
-            transition: border-color 0.2s ease, box-shadow 0.2s ease;
-        }
-
-        .text-input:focus {
-            outline: none;
-            border-color: var(--primary);
-            box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.08);
-        }
-
-        .flex-between {
+        /* 苹果系统 Segmented Control 导航 */
+        .nav-bar {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 16px;
-        }
-
-        .action-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
+            gap: 16px;
             flex-wrap: wrap;
-            justify-content: flex-end;
         }
 
-        .btn {
-            background: var(--primary);
-            color: white;
+        .tab-group {
+            display: flex;
+            background: #e3e3e9;
+            padding: 2px;
+            border-radius: 8px;
+            gap: 2px;
+        }
+
+        .tab-btn {
+            background: transparent;
             border: none;
-            padding: 10px 18px;
-            border-radius: var(--radius-md);
-            font-size: 14px;
-            font-weight: 500;
+            color: #555559;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s ease;
-            display: inline-flex;
+            transition: var(--transition);
+            display: flex;
             align-items: center;
             gap: 6px;
         }
 
-        .btn:hover { background: var(--primary-hover); transform: translateY(-1px); }
-        .btn:active { transform: translateY(0); }
-        .btn:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-            transform: none;
+        .tab-btn:hover {
+            color: var(--text-main);
         }
-        
-        .btn-danger { background: white; color: var(--danger); border: 1px solid #fca5a5; }
-        .btn-danger:hover { background: #fef2f2; color: var(--danger-hover); border-color: #f87171; }
 
+        .tab-btn.active {
+            color: var(--text-main);
+            background: #ffffff;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab-btn svg {
+            width: 14px;
+            height: 14px;
+        }
+
+        .external-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* 按钮设计 */
+        .btn {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: var(--transition);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            text-decoration: none;
+        }
+
+        .btn:hover {
+            background: var(--primary-hover);
+        }
+
+        .btn:active {
+            opacity: 0.85;
+        }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-outline {
+            background: #ffffff;
+            border: 1px solid var(--card-border);
+            color: var(--text-main);
+        }
+
+        .btn-outline:hover {
+            background: #f5f5f7;
+            border-color: #a1a1a6;
+        }
+
+        .btn-danger {
+            background: #ffffff;
+            border: 1px solid #ffd1d1;
+            color: var(--danger);
+        }
+
+        .btn-danger:hover {
+            background: var(--danger);
+            color: white;
+            border-color: var(--danger);
+        }
+
+        .btn-sm {
+            padding: 5px 10px;
+            font-size: 12px;
+            border-radius: 6px;
+        }
+
+        /* 表格样式 */
         .table-wrapper {
             overflow-x: auto;
-            border-radius: 8px;
-            border: 1px solid rgba(0,0,0,0.05);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--card-border-light);
+            background: #ffffff;
+            margin-top: 16px;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
             text-align: left;
-            background: rgba(255, 255, 255, 0.5);
         }
 
-        th, td {
-            padding: 14px 16px;
-            border-bottom: 1px solid rgba(0,0,0,0.05);
+        th,
+        td {
+            padding: 14px 18px;
+            border-bottom: 1px solid #f2f2f7;
+            white-space: nowrap;
         }
 
         th {
-            background: rgba(243, 244, 246, 0.5);
+            background: #f9f9fb;
             font-weight: 600;
-            color: var(--text-muted);
-            font-size: 13px;
+            color: var(--text-dim);
+            font-size: 12px;
             text-transform: uppercase;
-            letter-spacing: 0.05em;
+            letter-spacing: 0.02em;
         }
 
         td {
-            font-size: 14px;
-            color: #374151;
+            font-size: 13px;
+            color: var(--text-main);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        tr:hover td {
+            background: #fafafa;
         }
 
         .empty-state {
             text-align: center;
             padding: 40px;
-            color: var(--text-muted);
-            font-size: 14px;
+            color: var(--text-dim);
+            font-size: 13px;
         }
 
-        /* Modal Styles */
+        /* 倒计时与进度条 */
+        .remain-badge {
+            display: inline-flex;
+            flex-direction: column;
+            gap: 4px;
+            width: 100%;
+            max-width: 150px;
+        }
+
+        .progress-bar-bg {
+            width: 100%;
+            height: 4px;
+            background: #e5e5ea;
+            border-radius: 99px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: var(--success);
+            border-radius: 99px;
+            transition: width 0.5s ease;
+        }
+
+        .progress-bar.warning {
+            background: var(--warning);
+        }
+
+        .progress-bar.expired {
+            background: var(--danger);
+        }
+
+        /* 文本和数值样式 */
+        .mono {
+            font-family: 'JetBrains Mono', 'SFMono-Regular', Consolas, "Liberation Mono", Menlo, Courier, monospace;
+            font-size: 12px;
+        }
+
+        .metric-number {
+            font-variant-numeric: tabular-nums;
+            font-weight: 600;
+        }
+
+        /* Model Mappings 专有样式 */
+        .mapping-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-top: 16px;
+        }
+
+        @media (min-width: 768px) {
+            .mapping-grid {
+                grid-template-columns: 300px 1fr;
+            }
+        }
+
+        .mapping-flow {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #f5f5f7;
+            padding: 8px 14px;
+            border-radius: var(--radius-md);
+            border: 1px solid var(--card-border-light);
+        }
+
+        .mapping-arrow {
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            opacity: 0.7;
+        }
+
+        /* Modal 弹窗 */
         .modal-overlay {
             position: fixed;
-            top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(4px);
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4);
             display: flex;
             align-items: center;
             justify-content: center;
             opacity: 0;
             visibility: hidden;
-            transition: all 0.3s ease;
+            transition: var(--transition);
             z-index: 1000;
         }
 
@@ -279,201 +528,738 @@
         }
 
         .modal {
-            background: white;
+            background: #ffffff;
+            border: 1px solid var(--card-border-light);
             width: 100%;
             max-width: 480px;
             border-radius: var(--radius-lg);
             padding: 24px;
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-            transform: scale(0.95) translateY(10px);
-            transition: all 0.3s ease;
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.15);
+            transform: scale(0.96);
+            transition: var(--transition);
+            color: var(--text-main);
         }
 
         .modal-overlay.active .modal {
-            transform: scale(1) translateY(0);
+            transform: scale(1);
         }
 
-        .modal-title { margin: 0 0 16px 0; font-size: 20px; font-weight: 600; }
-        .form-group { margin-bottom: 16px; }
-        .form-label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; color: #374151; }
-        .form-control {
-            width: 100%;
-            padding: 12px;
-            border: 1px solid #D1D5DB;
-            border-radius: 8px;
-            font-family: monospace;
-            font-size: 13px;
-            box-sizing: border-box;
-            transition: border-color 0.2s;
-            resize: vertical;
-            min-height: 100px;
+        .modal-title {
+            margin: 0 0 14px 0;
+            font-size: 18px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-main);
         }
-        .form-control:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1); }
-        .form-hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; line-height: 1.4;}
-        
+
+        .modal-hint {
+            font-size: 11px;
+            color: var(--text-dim);
+            margin-top: 6px;
+            line-height: 1.4;
+        }
+
         .modal-actions {
             display: flex;
             justify-content: flex-end;
-            gap: 12px;
+            gap: 10px;
             margin-top: 24px;
         }
 
-        .btn-outline { background: transparent; border: 1px solid #D1D5DB; color: #4B5563; }
-        .btn-outline:hover { background: #F3F4F6; }
+        .textarea-control {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--card-border);
+            border-radius: var(--radius-md);
+            background: #ffffff;
+            color: var(--text-main);
+            font-family: monospace;
+            font-size: 12px;
+            box-sizing: border-box;
+            transition: var(--transition);
+            resize: vertical;
+            min-height: 100px;
+        }
 
+        .textarea-control:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+        }
+
+        /* Toast 消息提示 */
         .toast {
             position: fixed;
-            bottom: 20px;
-            right: 20px;
-            background: white;
+            bottom: 24px;
+            right: 24px;
+            background: #ffffff;
+            border: 1px solid var(--card-border-light);
             border-left: 4px solid var(--primary);
             padding: 12px 20px;
-            border-radius: 8px;
-            box-shadow: var(--shadow);
-            transform: translateX(120%);
-            transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+            border-radius: var(--radius-md);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+            transform: translateY(150%);
+            transition: transform 0.2s cubic-bezier(0.2, 0, 0, 1);
             z-index: 2000;
-            font-size: 14px;
-            font-weight: 500;
+            font-size: 13px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-main);
         }
-        .toast.show { transform: translateX(0); }
-        .toast.error { border-left-color: var(--danger); color: var(--danger); }
-        .toast.success { border-left-color: #10B981; color: #047857; }
 
-        @media (max-width: 720px) {
+        .toast.show {
+            transform: translateY(0);
+        }
+
+        .toast.error {
+            border-left-color: var(--danger);
+        }
+
+        .toast.success {
+            border-left-color: var(--success);
+        }
+
+        .toast.warning {
+            border-left-color: var(--warning);
+        }
+
+        .toast-icon {
+            display: flex;
+            align-items: center;
+        }
+
+        /* 用户卡片用量中包含的头像 */
+        .user-info-cell {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .user-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 1px solid var(--card-border-light);
+            background: #f5f5f7;
+        }
+
+        .user-names {
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 移动端排版优化 */
+        @media (max-width: 768px) {
             body {
-                padding: 24px 14px;
+                padding: 16px 8px;
             }
 
             .header {
-                align-items: flex-start;
-                flex-direction: column;
+                gap: 12px;
             }
 
             .header-meta {
                 justify-content: flex-start;
             }
 
-            .glass-card,
-            .modal {
-                padding: 18px;
+            .hide-mobile {
+                display: none !important;
             }
 
-            th, td {
-                padding: 12px;
+            .nav-bar {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+            }
+
+            .tab-group {
+                overflow-x: auto;
+                padding-bottom: 2px;
+            }
+
+            .external-actions {
+                width: 100%;
+                display: flex;
+                gap: 8px;
+            }
+
+            .external-actions>* {
+                flex: 1;
+                justify-content: center;
+            }
+
+            th,
+            td {
+                padding: 10px 12px;
             }
         }
-
     </style>
 </head>
+
 <body>
+    <!-- 认证界面 (Login Shell) -->
     <div id="authShell" class="auth-shell hidden">
-        <div class="glass-card">
-            <h1 class="login-title">Mimo2 Center</h1>
-            <p class="login-copy">这个面板现在需要登录后才能查看和管理节点账号。</p>
+        <div class="glass-card" style="padding: 36px 32px;">
+            <div style="display: flex; justify-content: center; margin-bottom: 20px;">
+                <div class="logo-icon" style="width: 48px; height: 48px; border-radius: 12px;">
+                    <i data-lucide="shield-alert" style="width: 24px; height: 24px;"></i>
+                </div>
+            </div>
+            <h1 class="login-title">MIMO 公益站</h1>
+            <p class="login-copy">请输入控制台凭证密码进行身份验证</p>
             <div class="auth-form">
-                <div>
-                    <label class="form-label" for="loginUsername">用户名</label>
-                    <input id="loginUsername" class="text-input" autocomplete="username" />
+                <div class="form-group">
+                    <label class="form-label" for="loginUsername">
+                        <i data-lucide="user" style="width: 14px;"></i> 用户名 </label>
+                    <input id="loginUsername" class="text-input" autocomplete="username" placeholder="请输入用户名" />
                 </div>
-                <div>
-                    <label class="form-label" for="loginPassword">密码</label>
-                    <input id="loginPassword" class="text-input" type="password" autocomplete="current-password" />
+                <div class="form-group" style="margin-bottom: 8px;">
+                    <label class="form-label" for="loginPassword">
+                        <i data-lucide="key-round" style="width: 14px;"></i> 密码 </label>
+                    <input id="loginPassword" class="text-input" type="password" autocomplete="current-password"
+                        placeholder="请输入凭证密码" />
                 </div>
-                <button class="btn" onclick="submitLogin()">登录</button>
+                <button class="btn" onclick="submitLogin()"
+                    style="width: 100%; height: 46px; font-size: 15px; margin-top: 10px;">
+                    <i data-lucide="log-in" style="width: 18px;"></i> 登录控制面板 </button>
+                <div
+                    style="display: flex; align-items: center; justify-content: center; margin: 16px 0 8px 0; gap: 10px;">
+                    <div style="flex: 1; height: 1px; background: var(--card-border-light);"></div>
+                    <span style="font-size: 12px; color: var(--text-dim); text-transform: uppercase;">或第三方授权登录</span>
+                    <div style="flex: 1; height: 1px; background: var(--card-border-light);"></div>
+                </div>
+                <a href="/api/oauth/login" class="btn btn-outline"
+                    style="width: 100%; height: 46px; font-size: 15px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--primary-glow); border-color: var(--primary-glow); color: var(--primary);">
+                    <i data-lucide="shield-check" style="width: 18px; color: var(--primary);"></i> 使用 Linux.do 登录获取 Key
+                </a>
             </div>
         </div>
     </div>
-
-    <div id="appShell" class="container hidden">
-        <div class="header">
-            <h1>Mimo2 Center</h1>
-            <div class="header-meta">
-                <span id="webAuthBadge" class="badge">WebUI 未鉴权</span>
-                <span id="aiAuthBadge" class="badge warn">AI 端点未鉴权</span>
-                <button id="logoutBtn" class="btn btn-outline hidden" onclick="logout()">退出登录</button>
+    <!-- 普通用户个人界面 (User API Key & Usage Center) -->
+    <div id="userShell" class="container hidden">
+        <div class="glass-card">
+            <div class="header">
+                <div class="brand-section">
+                    <div class="logo-icon" style="background: var(--primary);">
+                        <i data-lucide="key" style="width: 20px; height: 20px; color: white;"></i>
+                    </div>
+                    <div>
+                        <h1 class="brand-name">用户面板</h1>
+                    </div>
+                </div>
+                <div class="header-meta">
+                    <button class="btn btn-outline btn-danger btn-sm" onclick="logoutUser()">
+                        <i data-lucide="log-out" style="width: 14px;"></i> 登出账号 </button>
+                </div>
             </div>
         </div>
-
-        <!-- 状态卡片 -->
-        <div class="glass-card">
-            <div>
-                <div class="status-container">
-                    <div id="statusIndicator" class="status-indicator"></div>
+        <div style="display: grid; grid-template-columns: 1fr; gap: 20px; margin-top: 4px;">
+            <div style="display: grid; grid-template-columns: 1fr; gap: 20px;" class="mapping-grid">
+                <!-- 左侧：用户凭证管理 -->
+                <div class="glass-card"
+                    style="display: flex; flex-direction: column; justify-content: space-between; gap: 16px;">
                     <div>
-                        <div class="status-text">网关运行中</div>
-                        <div class="status-subtext" id="statusText">正在获取实时数据...</div>
+                        <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 20px;">
+                            <img id="userAvatar" class="user-avatar"
+                                style="width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid var(--card-border-light);"
+                                src='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23708a7e"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>'
+                                onerror="this.onerror=null; this.src=defaultAvatar;" />
+                            <div>
+                                <h3 id="userDisplayName" style="margin: 0; font-size: 18px; font-weight: 700;">用户加载中...
+                                </h3>
+                                <p id="userProviderId"
+                                    style="margin: 4px 0 0 0; font-size: 12px; color: var(--text-dim); font-family: monospace;">
+                                    ID: --</p>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" style="justify-content: space-between;">
+                                <span style="display: flex; align-items: center; gap: 6px;">
+                                    <i data-lucide="key-round" style="width: 14px;"></i> 我的 API Key </span>
+                                <span style="font-size: 11px; color: var(--text-dim);">可用于 OpenAI / Anthropic
+                                    格式调用</span>
+                            </label>
+                            <div style="display: flex; gap: 8px; align-items: center; position: relative;">
+                                <input id="userAPIKeyInput" type="password" readonly class="text-input mono"
+                                    style="padding-right: 44px; font-size: 13px;" value="sk-mimo-..." />
+                                <button onclick="toggleAPIKeyVisibility()" class="btn btn-outline"
+                                    style="position: absolute; right: 8px; border: none; background: transparent; padding: 4px; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer;">
+                                    <i id="keyVisibilityIcon" data-lucide="eye" style="width: 18px;"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+                        <button class="btn" onclick="copyUserAPIKey()" style="flex: 1; min-width: 120px;">
+                            <i data-lucide="copy" style="width: 15px;"></i> 复制 API Key </button>
+                        <button class="btn btn-outline btn-danger" onclick="rotateUserAPIKey()"
+                            style="flex: 1; min-width: 120px;">
+                            <i data-lucide="refresh-cw" style="width: 15px;"></i> 重新生成 Key </button>
+                    </div>
+                </div>
+                <!-- 右侧：用量统计 -->
+                <div class="glass-card"
+                    style="display: flex; flex-direction: column; justify-content: space-between; gap: 16px;">
+                    <div>
+                        <h3
+                            style="margin: 0 0 16px 0; font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="bar-chart-3" style="width: 18px; color: var(--primary);"></i> 接口调用统计
+                        </h3>
+                        <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                            <div
+                                style="background: var(--bg-color); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--card-border-light);">
+                                <div
+                                    style="font-size: 11px; color: var(--text-dim); font-weight: 600; text-transform: uppercase;">
+                                    今日请求次数</div>
+                                <div id="userRequestsToday" class="metric-number mono"
+                                    style="font-size: 20px; font-weight: 700; color: var(--text-main); margin-top: 4px;">
+                                    0</div>
+                            </div>
+                            <div
+                                style="background: var(--bg-color); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--card-border-light);">
+                                <div
+                                    style="font-size: 11px; color: var(--text-dim); font-weight: 600; text-transform: uppercase;">
+                                    累计请求总数</div>
+                                <div id="userRequestsTotal" class="metric-number mono"
+                                    style="font-size: 20px; font-weight: 700; color: var(--text-main); margin-top: 4px;">
+                                    0</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="border-top: 1px solid var(--card-border-light); padding-top: 12px;">
+                        <div
+                            style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                            <span style="color: var(--text-muted);">上次请求时间：</span>
+                            <strong id="userLastActiveTime" class="mono" style="color: var(--text-main);">从未调用</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 底部：快速接入指南 -->
+            <div class="glass-card">
+                <h3
+                    style="margin: 0 0 14px 0; font-size: 16px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
+                    <i data-lucide="help-circle" style="width: 18px; color: var(--primary);"></i> 快速接入指南
+                </h3>
+                <div style="display: flex; flex-direction: column; gap: 12px; font-size: 13px; line-height: 1.6;">
+                    <div>
+                        <strong style="color: var(--text-main);">1. API 接口地址 (Base URL)</strong>
+                        <div style="display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap;">
+                            <div
+                                style="flex: 1; background: var(--bg-color); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--card-border-light); font-family: monospace; display: flex; justify-content: space-between; align-items: center;">
+                                <span id="openaiBaseUrl">https://[当前域名]/v1</span>
+                                <button class="btn btn-outline btn-sm" style="padding: 2px 6px; font-size: 10px;"
+                                    onclick="copyText(document.getElementById('openaiBaseUrl').textContent)">复制</button>
+                            </div>
+                            <div
+                                style="flex: 1; background: var(--bg-color); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--card-border-light); font-family: monospace; display: flex; justify-content: space-between; align-items: center;">
+                                <span id="claudeBaseUrl">https://[当前域名]/anthropic</span>
+                                <button class="btn btn-outline btn-sm" style="padding: 2px 6px; font-size: 10px;"
+                                    onclick="copyText(document.getElementById('claudeBaseUrl').textContent)">复制</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 6px;">
+                        <strong style="color: var(--text-main);">2. 配置示例 (以 OpenAI 客户端为例)</strong>
+                        <pre
+                            style="background: var(--bg-color); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--card-border-light); overflow-x: auto; margin: 6px 0 0 0; font-family: monospace; font-size: 12px; color: var(--text-muted);">
+curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]</span>/chat/completions \
+  -H "Authorization: Bearer <span style="color: var(--primary);">[您的 API Key]</span>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "mimo-v2.5-pro",
+    "messages": [{"role": "user", "content": "你好！"}],
+    "stream": true
+  }'</pre>
+                    </div>
+                    <div
+                        style="margin-top: 6px; color: var(--text-muted); font-size: 12px; display: flex; align-items: center; gap: 6px;">
+                        <i data-lucide="info" style="width: 14px; color: var(--primary);"></i> 提示：支持自动模型映射路由。如需使用 Claude
+                        系列模型，您可以直接将接口指向 `/anthropic`。
                     </div>
                 </div>
             </div>
         </div>
-
-        <!-- 用户管理卡片 -->
+    </div>
+    <!-- 主控台界面 (Dashboard App Shell) -->
+    <div id="appShell" class="container hidden">
         <div class="glass-card">
-            <div class="flex-between">
-                <h2 style="margin: 0; font-size: 18px;">Claw 运行账号管理</h2>
-                <div class="action-group">
-                    <button id="rebuildBtn" class="btn btn-outline" onclick="triggerRebuild()">Rebuild</button>
-                    <button class="btn" onclick="openModal()">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                        导入凭证
-                    </button>
+            <div class="header">
+                <div class="brand-section">
+                    <div class="logo-icon">
+                        <i data-lucide="terminal" style="width: 20px; height: 20px;"></i>
+                    </div>
+                    <div>
+                        <h1 class="brand-name">MIMO 公益站</h1>
+                    </div>
+                </div>
+                <div class="header-meta">
+                    <span id="webAuthBadge" class="badge">
+                        <i data-lucide="shield"></i> WebUI 未鉴权 </span>
+                    <span id="aiAuthBadge" class="badge warn">
+                        <i data-lucide="key-round"></i> AI 端点未鉴权 </span>
                 </div>
             </div>
-            
-            <div class="table-wrapper">
-                <table id="usersTable">
-                    <thead>
-                        <tr>
-                            <th>用户 ID (User ID)</th>
-                            <th>备注名</th>
-                            <th>实例状态 / 剩余时长</th>
-                            <th>ServiceToken 简览</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="usersBody">
-                        <tr><td colspan="5" class="empty-state">加载中...</td></tr>
-                    </tbody>
-                </table>
+        </div>
+        <!-- 全局极速状态检测 -->
+        <div class="glass-card" style="padding: 20px 24px;">
+            <div class="status-container">
+                <div class="status-info">
+                    <div id="statusIndicator" class="status-indicator"></div>
+                    <div>
+                        <div class="status-title" id="statusTitle">网关健康度良好</div>
+                        <div class="status-desc" id="statusText">正在同步网络节点在线状态...</div>
+                    </div>
+                </div>
+                <div>
+                    <button id="rebuildBtn" class="btn btn-outline btn-sm" onclick="triggerRebuild()">
+                        <i data-lucide="refresh-cw" style="width: 14px;"></i> 重建所有节点 </button>
+                </div>
+            </div>
+        </div>
+        <!-- 导航菜单 -->
+        <div class="nav-bar">
+            <div class="tab-group">
+                <button class="tab-btn active" onclick="switchTab('accounts')" id="tabBtn-accounts">
+                    <i data-lucide="users"></i> 运行账号 </button>
+                <button class="tab-btn" onclick="switchTab('mappings')" id="tabBtn-mappings">
+                    <i data-lucide="git-compare"></i> 模型映射 </button>
+                <button class="tab-btn" onclick="switchTab('oauth')" id="tabBtn-oauth">
+                    <i data-lucide="shield-check"></i> 授权用户 </button>
+            </div>
+            <div class="external-actions">
+                <a href="https://status.iqach.top" target="_blank" class="btn btn-outline btn-sm">
+                    <i data-lucide="activity" style="width: 14px; color: var(--primary);"></i> 外部监控状态 ↗ </a>
+                <button id="logoutBtn" class="btn btn-outline btn-danger btn-sm hidden" onclick="logout()">
+                    <i data-lucide="log-out" style="width: 14px;"></i> 登出 </button>
+            </div>
+        </div>
+        <!-- Tab 1: Claw 账号管理 -->
+        <div id="tabContent-accounts" class="tab-pane">
+            <div class="glass-card">
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
+                    <div>
+                        <h2 style="margin: 0; font-size: 18px; font-weight: 700;">Claw 运行账号列表</h2>
+                        <p style="margin: 4px 0 0 0; font-size: 13px; color: var(--text-muted);">此处管理提供底层算力支持的 Xiaomi
+                            内网代理账号凭证。</p>
+                    </div>
+                    <button class="btn" onclick="openImportModal()">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg> 导入凭证 Cookie </button>
+                </div>
+                <div class="table-wrapper">
+                    <table id="usersTable">
+                        <thead>
+                            <tr>
+                                <th style="width: 160px;">用户 ID (User ID)</th>
+                                <th style="width: 150px;">备注名称</th>
+                                <th>账号状态</th>
+                                <th>生存倒计时</th>
+                                <th style="width: 180px;" class="hide-mobile">凭证简览 (Token)</th>
+                                <th style="width: 100px; text-align: center;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersBody">
+                            <tr>
+                                <td colspan="6" class="empty-state">数据加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        <!-- Tab 2: 模型映射管理 (Model Mappings) -->
+        <div id="tabContent-mappings" class="tab-pane hidden">
+            <div class="mapping-grid">
+                <!-- 左侧添加映射表单 -->
+                <div class="glass-card" style="height: fit-content;">
+                    <h3 style="margin: 0 0 6px 0; font-size: 16px; font-weight: 700;">添加 / 更新映射规则</h3>
+                    <p style="margin: 0 0 20px 0; font-size: 13px; color: var(--text-muted);">
+                        自定义映射关系，拦截特定客户端模型请求并路由到指定的目标模型。</p>
+                    <div class="auth-form" id="mappingForm">
+                        <div class="form-group">
+                            <label class="form-label" for="mappingSource">
+                                <i data-lucide="arrow-right-left" style="width: 14px;"></i> 请求源模型 </label>
+                            <input id="mappingSource" class="text-input mono" placeholder="如: gpt-4o, claude-3-5-sonnet"
+                                required />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="mappingTarget">
+                                <i data-lucide="shuffle" style="width: 14px;"></i> 映射目标模型 </label>
+                            <input id="mappingTarget" class="text-input mono" placeholder="如: mimo-v2.5-pro, mimo-v2"
+                                required />
+                        </div>
+                        <button class="btn" onclick="submitMapping()" style="margin-top: 10px;">
+                            <i data-lucide="plus-circle" style="width: 16px;"></i> 保存映射规则 </button>
+                    </div>
+                </div>
+                <!-- 右侧映射列表 -->
+                <div class="glass-card">
+                    <h3 style="margin: 0 0 6px 0; font-size: 16px; font-weight: 700;">当前映射规则</h3>
+                    <p style="margin: 0 0 16px 0; font-size: 13px; color: var(--text-muted);">请求匹配顺序为：精确匹配 ➔ 模糊匹配。</p>
+                    <div class="table-wrapper">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>原请求模型 (Source Model)</th>
+                                    <th style="width: 60px; text-align: center;"></th>
+                                    <th>转发到 (Target Model)</th>
+                                    <th style="width: 100px; text-align: center;">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="mappingsBody">
+                                <tr>
+                                    <td colspan="4" class="empty-state">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <!-- Tab 3: OAuth 授权 API Key 用量 -->
+        <div id="tabContent-oauth" class="tab-pane hidden">
+            <div class="glass-card">
+                <div
+                    style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 12px;">
+                    <div>
+                        <h2 style="margin: 0; font-size: 18px; font-weight: 700;">OAuth API 授权用户用量监控</h2>
+                        <p style="margin: 4px 0 0 0; font-size: 13px; color: var(--text-muted);">监控通过 Linux.do 登录获得独立
+                            API Key 的外部开发者额度及今日总调用数。</p>
+                    </div>
+                    <button class="btn btn-outline" onclick="fetchOAuthUsers()">
+                        <i data-lucide="rotate-cw" style="width: 14px;"></i> 刷新数据 </button>
+                </div>
+                <div class="table-wrapper">
+                    <table id="oauthUsersTable">
+                        <thead>
+                            <tr>
+                                <th>Linux.do 授权用户</th>
+                                <th style="text-align: right;">今日请求次数</th>
+                                <th style="text-align: right;">累计请求总数</th>
+                                <th class="hide-mobile">最近请求时间</th>
+                                <th class="hide-mobile">API Key 预览</th>
+                                <th style="text-align: center; width: 140px;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="oauthUsersBody">
+                            <tr>
+                                <td colspan="6" class="empty-state">数据加载中...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
-
-    <!-- 导入弹窗 -->
+    <!-- 凭证导入模态弹窗 -->
     <div class="modal-overlay" id="importModal">
         <div class="modal">
-            <h3 class="modal-title">导入 Xiaomi 凭证</h3>
+            <div class="modal-title">
+                <i data-lucide="key" style="color: var(--primary);"></i> 导入 Xiaomi 凭证数据
+            </div>
             <div class="form-group">
-                <label class="form-label">Cookie / 凭证数据字符串</label>
-                <textarea id="cookieInput" class="form-control" placeholder='例如: serviceToken="vjQ..."; userId=686621...; xiaomichatbot_ph="6vv..."'></textarea>
-                <div class="form-hint">支持自动解析多格式文本，需至少包含 <code>userId</code>, <code>serviceToken</code> 及 <code>xiaomichatbot_ph</code>。系统会自动提取值。</div>
+                <label class="form-label" style="margin-bottom: 6px;">输入 Cookie 或者多行抓包数据文本</label>
+                <textarea id="cookieInput" class="textarea-control"
+                    placeholder='输入类似: userId=123456789; serviceToken="vjQ3..."; xiaomichatbot_ph="abcd..."'></textarea>
+                <div class="modal-hint">系统将自动清洗并从中解析出 <code>userId</code>, <code>serviceToken</code> 及
+                    <code>xiaomichatbot_ph</code> 字段进行入库。</div>
             </div>
             <div class="modal-actions">
-                <button class="btn btn-outline" onclick="closeModal()">取消</button>
-                <button class="btn" onclick="submitImport()">确认导入</button>
+                <button class="btn btn-outline" onclick="closeImportModal()">取消</button>
+                <button class="btn" onclick="submitImport()">确认解析并保存</button>
             </div>
         </div>
     </div>
-
-    <div id="toast" class="toast"></div>
-
+    <!-- 通用确认模态弹窗 -->
+    <div class="modal-overlay" id="confirmModal">
+        <div class="modal" style="max-width: 400px;">
+            <div class="modal-title" id="confirmModalTitle">
+                <i data-lucide="help-circle" style="color: var(--primary);"></i> 确认操作
+            </div>
+            <div style="font-size: 14px; line-height: 1.6; color: var(--text-main); margin-bottom: 24px; white-space: pre-line;" id="confirmModalMessage">
+                提示内容
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-outline" onclick="handleConfirm(false)">取消</button>
+                <button class="btn" id="confirmModalOkBtn" onclick="handleConfirm(true)">确定</button>
+            </div>
+        </div>
+    </div>
+    <!-- 通用结果展示模态弹窗 -->
+    <div class="modal-overlay" id="promptModal">
+        <div class="modal" style="max-width: 420px;">
+            <div class="modal-title" id="promptModalTitle">
+                <i data-lucide="key" style="color: var(--primary);"></i> 密钥已重置
+            </div>
+            <div style="font-size: 13px; color: var(--text-dim); margin-bottom: 12px; line-height: 1.5;" id="promptModalLabel">
+                请立即复制并保存以下密钥（关闭后将无法再次查看）：
+            </div>
+            <div style="background: var(--bg-color); padding: 10px 14px; border-radius: 6px; border: 1px solid var(--card-border-light); font-family: monospace; display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+                <span id="promptModalValue" style="word-break: break-all; font-size: 13px; color: var(--text-main); font-weight: 600; padding-right: 8px;"></span>
+                <button class="btn btn-outline btn-sm" style="padding: 2px 6px; font-size: 10px; flex-shrink: 0;"
+                    onclick="copyText(document.getElementById('promptModalValue').textContent)">复制</button>
+            </div>
+            <div class="modal-actions" style="margin-top: 0;">
+                <button class="btn" onclick="document.getElementById('promptModal').classList.remove('active')" style="background: var(--primary); color: white; width: 100%; justify-content: center;">我已复制并妥善保存</button>
+            </div>
+        </div>
+    </div>
+    <!-- Toast 浮层提示 -->
+    <div id="toast" class="toast">
+        <div class="toast-icon" id="toastIcon"></div>
+        <div id="toastText">提示内容</div>
+    </div>
     <script>
         let statusInterval;
         let webAuthEnabled = false;
         let webAuthReady = false;
         let preferredUsername = 'admin';
+        let activeTab = 'accounts';
+        let currentUserKey = '';
+        const defaultAvatar = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23708a7e"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
 
-        function showToast(msg, type='success') {
-            const el = document.getElementById('toast');
-            el.textContent = msg;
-            el.className = `toast show ${type}`;
-            setTimeout(() => { el.className = `toast ${type}`; }, 3000);
+        // 辅助：获取 cookie
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+            return '';
         }
 
-        function setShellVisibility(showApp) {
-            document.getElementById('appShell').classList.toggle('hidden', !showApp);
-            document.getElementById('authShell').classList.toggle('hidden', showApp);
+        // 辅助：删除 cookie
+        function deleteCookie(name) {
+            document.cookie = name + '=; Max-Age=-99999999; path=/;';
+        }
+
+        // 辅助：复制文本
+        function copyText(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showToast('已成功复制到剪贴板');
+            }).catch(() => {
+                // 回退方案
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                try {
+                    document.execCommand('copy');
+                    showToast('已成功复制到剪贴板');
+                } catch (e) {
+                    showToast('复制失败，请手动复制', 'error');
+                }
+                document.body.removeChild(ta);
+            });
+        }
+
+        // 现代 Toast 实现
+        function showToast(msg, type = 'success') {
+            const el = document.getElementById('toast');
+            const iconEl = document.getElementById('toastIcon');
+            const textEl = document.getElementById('toastText');
+
+            textEl.textContent = msg;
+            el.className = `toast show ${type}`;
+
+            let iconMarkup = '<i data-lucide="info" style="width: 18px; height: 18px;"></i>';
+            if (type === 'success') iconMarkup = '<i data-lucide="check-circle-2" style="width: 18px; height: 18px; color: var(--success)"></i>';
+            if (type === 'error') iconMarkup = '<i data-lucide="x-circle" style="width: 18px; height: 18px; color: var(--danger)"></i>';
+            if (type === 'warning') iconMarkup = '<i data-lucide="alert-triangle" style="width: 18px; height: 18px; color: var(--warning)"></i>';
+
+            iconEl.innerHTML = iconMarkup;
+            lucide.createIcons();
+
+            setTimeout(() => {
+                el.classList.remove('show');
+            }, 3000);
+        }
+
+        function escapeHTML(value) {
+            return String(value ?? '').replace(/[&<>"']/g, ch => ({
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[ch]));
+        }
+
+        let confirmResolve = null;
+
+        function showConfirm(title, message, isDanger = false) {
+            const titleEl = document.getElementById('confirmModalTitle');
+            if (titleEl) {
+                titleEl.innerHTML = `
+                    <i data-lucide="${isDanger ? 'alert-triangle' : 'help-circle'}" style="color: var(--${isDanger ? 'danger' : 'primary'}); width: 18px; height: 18px;"></i> ${escapeHTML(title)}
+                `;
+            }
+            const msgEl = document.getElementById('confirmModalMessage');
+            if (msgEl) msgEl.textContent = message;
+            
+            const okBtn = document.getElementById('confirmModalOkBtn');
+            if (okBtn) {
+                if (isDanger) {
+                    okBtn.style.background = 'var(--danger)';
+                    okBtn.style.borderColor = 'var(--danger)';
+                } else {
+                    okBtn.style.background = 'var(--primary)';
+                    okBtn.style.borderColor = 'var(--primary)';
+                }
+            }
+            
+            const modal = document.getElementById('confirmModal');
+            if (modal) modal.classList.add('active');
+            
+            lucide.createIcons();
+            
+            return new Promise((resolve) => {
+                confirmResolve = resolve;
+            });
+        }
+
+        function handleConfirm(result) {
+            const modal = document.getElementById('confirmModal');
+            if (modal) modal.classList.remove('active');
+            if (confirmResolve) {
+                confirmResolve(result);
+                confirmResolve = null;
+            }
+        }
+
+        function showPromptModal(title, label, value) {
+            const titleEl = document.getElementById('promptModalTitle');
+            if (titleEl) {
+                titleEl.innerHTML = `<i data-lucide="key" style="color: var(--primary); width: 18px; height: 18px;"></i> ${escapeHTML(title)}`;
+            }
+            const labelEl = document.getElementById('promptModalLabel');
+            if (labelEl) labelEl.textContent = label;
+            const valueEl = document.getElementById('promptModalValue');
+            if (valueEl) valueEl.textContent = value;
+            
+            const modal = document.getElementById('promptModal');
+            if (modal) modal.classList.add('active');
+            
+            lucide.createIcons();
+        }
+
+        function formatUnixTime(ts) {
+            if (!ts) return '从未请求';
+            return new Date(ts * 1000).toLocaleString();
+        }
+
+        // 多视图控制：管理员后台 (admin) / 普通用户面板 (user) / 登录界面 (login)
+        function setShellVisibility(mode) {
+            document.getElementById('appShell').classList.toggle('hidden', mode !== 'admin');
+            document.getElementById('userShell').classList.toggle('hidden', mode !== 'user');
+            document.getElementById('authShell').classList.toggle('hidden', mode !== 'login');
         }
 
         function applyAuthBadges(session) {
@@ -481,18 +1267,29 @@
             const aiBadge = document.getElementById('aiAuthBadge');
             const logoutBtn = document.getElementById('logoutBtn');
 
-            webBadge.textContent = session.enabled ? `WebUI 已鉴权 · ${session.username}` : 'WebUI 未鉴权';
-            webBadge.className = `badge${session.enabled ? '' : ' warn'}`;
-            aiBadge.textContent = session.ai_auth_enabled ? 'AI 端点已鉴权' : 'AI 端点未鉴权';
-            aiBadge.className = `badge${session.ai_auth_enabled ? '' : ' warn'}`;
-            logoutBtn.classList.toggle('hidden', !session.enabled);
+            if (session.enabled) {
+                webBadge.textContent = `WebUI 已鉴权 · ${session.username}`;
+                webBadge.className = 'badge success';
+                logoutBtn.classList.remove('hidden');
+            } else {
+                webBadge.textContent = 'WebUI 未鉴权';
+                webBadge.className = 'badge warn';
+                logoutBtn.classList.add('hidden');
+            }
+
+            if (session.ai_auth_enabled) {
+                aiBadge.textContent = 'AI 端点已鉴权';
+                aiBadge.className = 'badge success';
+            } else {
+                aiBadge.textContent = 'AI 端点未鉴权';
+                aiBadge.className = 'badge warn';
+            }
+            lucide.createIcons();
         }
 
         async function fetchSession() {
             const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
-            if (!res.ok) {
-                throw new Error('获取登录状态失败');
-            }
+            if (!res.ok) throw new Error('获取登录状态失败');
             const session = await res.json();
             webAuthEnabled = !!session.enabled;
             preferredUsername = session.username || 'admin';
@@ -507,8 +1304,7 @@
             if (res.status === 401) {
                 const wasAuthenticated = webAuthReady;
                 webAuthReady = false;
-                setShellVisibility(false);
-                // 仅在会话过期（之前已登录）时清空密码，未登录状态下不干扰用户输入
+                setShellVisibility('login');
                 if (wasAuthenticated) {
                     document.getElementById('loginPassword').value = '';
                 }
@@ -518,10 +1314,126 @@
             return res;
         }
 
-        function startStatusPolling() {
-            if (statusInterval) {
-                clearInterval(statusInterval);
+        // ================= 普通用户面板交互逻辑 =================
+        let userAPIKey = '';
+
+        async function loadUserDashboard() {
+            // Cookie 已改为 HttpOnly，前端无法直接读取，通过 /api/oauth/me 探测
+            // 如果之前通过 rotateUserAPIKey 已拿到新 key，优先用它
+            const authHeaders = userAPIKey ? { 'Authorization': `Bearer ${userAPIKey}` } : {};
+
+            try {
+                const res = await fetch('/api/oauth/me', {
+                    credentials: 'same-origin',
+                    headers: authHeaders
+                });
+                if (!res.ok) {
+                    if (res.status === 401) {
+                        showToast('您的 API 授权已失效，请重新登录获取', 'error');
+                        setShellVisibility('login');
+                        return;
+                    }
+                    throw new Error('加载用户信息失败');
+                }
+                const data = await res.json();
+
+                // 保存 key 以便后续 rotate 时作为身份标识
+                userAPIKey = data.api_key;
+
+                // 渲染用户信息
+                document.getElementById('userAvatar').src = data.avatar_url || defaultAvatar;
+                document.getElementById('userDisplayName').textContent = data.name || data.username || 'Linux.do 用户';
+                document.getElementById('userProviderId').textContent = `Linux.do UID: ${data.provider_user_id}`;
+
+                // 填充 Key
+                const keyInput = document.getElementById('userAPIKeyInput');
+                keyInput.value = data.api_key;
+
+                // 渲染调用统计
+                document.getElementById('userRequestsToday').textContent = data.requests_today;
+                document.getElementById('userRequestsTotal').textContent = data.requests_total;
+
+                if (data.last_request_at > 0) {
+                    document.getElementById('userLastActiveTime').textContent = formatUnixTime(data.last_request_at);
+                } else {
+                    document.getElementById('userLastActiveTime').textContent = '从未使用过';
+                }
+            } catch (e) {
+                showToast('同步用量中心数据失败', 'error');
             }
+        }
+
+        function toggleAPIKeyVisibility() {
+            const input = document.getElementById('userAPIKeyInput');
+            const icon = document.getElementById('keyVisibilityIcon');
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.setAttribute('data-lucide', 'eye-off');
+            } else {
+                input.type = 'password';
+                icon.setAttribute('data-lucide', 'eye');
+            }
+            lucide.createIcons();
+        }
+
+        function copyUserAPIKey() {
+            const input = document.getElementById('userAPIKeyInput');
+            copyText(input.value);
+        }
+
+        async function rotateUserAPIKey() {
+            if (!await showConfirm('警告：重新生成 API 密钥', '确定要重新生成您的 API Key 吗？\n重新生成后，旧的 Key 将会立即失效，您必须更新您在所有 AI 客户端上的配置！', true)) {
+                return;
+            }
+            try {
+                const res = await fetch('/api/oauth/me/rotate', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: userAPIKey ? { 'Authorization': `Bearer ${userAPIKey}` } : {}
+                });
+                if (!res.ok) throw new Error('重置 API 密钥失败');
+                const data = await res.json();
+
+                userAPIKey = data.api_key;
+                document.getElementById('userAPIKeyInput').value = data.api_key;
+                showToast('API Key 重置成功！旧 Key 已失效。');
+
+                // 重新加载以更新用量和新 Key 信息
+                await loadUserDashboard();
+            } catch (e) {
+                showToast('重置密钥失败，请重试', 'error');
+            }
+        }
+
+        function logoutUser() {
+            // 服务端清除 HttpOnly Cookie
+            fetch('/api/oauth/me/logout', { method: 'POST', credentials: 'same-origin' });
+            userAPIKey = '';
+            showToast('已登出您的 API 授权账号');
+
+            // 清除地址栏可能带有的 mode=user 标签
+            const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+            window.history.replaceState({ path: cleanUrl }, '', cleanUrl);
+
+            setShellVisibility('login');
+        }
+
+        // 标签切换
+        function switchTab(tabName) {
+            activeTab = tabName;
+            document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+            document.getElementById(`tabContent-${tabName}`).classList.remove('hidden');
+            document.getElementById(`tabBtn-${tabName}`).classList.add('active');
+
+            if (tabName === 'accounts') fetchUsers();
+            if (tabName === 'mappings') fetchMappings();
+            if (tabName === 'oauth') fetchOAuthUsers();
+        }
+
+        function startStatusPolling() {
+            if (statusInterval) clearInterval(statusInterval);
             statusInterval = setInterval(() => {
                 if (webAuthReady || !webAuthEnabled) {
                     fetchStatus();
@@ -530,143 +1442,366 @@
         }
 
         async function fetchStatus() {
-            // 认证开启但未登录时，跳过状态请求（避免 401 清空密码输入框）
             if (webAuthEnabled && !webAuthReady) return;
             try {
                 const res = await apiFetch('/api/system/status');
                 const data = await res.json();
                 const indicator = document.getElementById('statusIndicator');
+                const title = document.getElementById('statusTitle');
                 const text = document.getElementById('statusText');
-                
+
                 if (data.active_clients > 0) {
                     indicator.className = 'status-indicator';
-                    text.textContent = `内网通信节点保持连接: ${data.active_clients} 个`;
+                    title.textContent = '网关运行中';
+                    text.textContent = `内网通信节点正常连接数: ${data.active_clients} 个`;
                 } else {
                     indicator.className = 'status-indicator offline';
-                    text.textContent = `危险！没有任何一个内网节点在线，所有 API 请求将被退回`;
+                    title.textContent = '危险！无可用通信节点';
+                    text.textContent = `当前没有节点维持连接，所有外部 API 请求将被退回`;
                 }
-            } catch(e) {
-                if (e.message === 'UNAUTHORIZED') {
-                    return;
-                }
+            } catch (e) {
+                if (e.message === 'UNAUTHORIZED') return;
                 document.getElementById('statusIndicator').className = 'status-indicator offline';
-                document.getElementById('statusText').textContent = '后端连接失败';
+                document.getElementById('statusTitle').textContent = '后端失去连接';
+                document.getElementById('statusText').textContent = '无法与 API 后端建立通信，请检查网关程序是否存活';
             }
         }
 
+        // ================= Tab 1: Claw 运行账号 =================
         async function fetchUsers() {
+            if (activeTab !== 'accounts') return;
             try {
                 const res = await apiFetch('/api/users/list');
                 const data = await res.json();
                 const tbody = document.getElementById('usersBody');
-                
+
                 if (data.users && data.users.length > 0) {
-                    tbody.innerHTML = data.users.map(u => `
-                        <tr>
-                            <td><strong style="color:var(--primary)">${u.userId}</strong></td>
-                            <td>${u.name || '(未命名)'}</td>
-                            <td>
-                                <div><strong style="color: ${u.claw_status === 'AVAILABLE' ? '#10B981' : (u.claw_status === 'EXPIRED(401)' ? '#EF4444' : '#F59E0B')}">${u.claw_status || '未知'}</strong></div>
-                                <div class="countdown-text" data-remain="${u.remain_sec}" style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                                    ${u.remain_sec > 0 ? '剩余: ' + Math.floor(u.remain_sec / 60) + ' 分 ' + (u.remain_sec % 60) + ' 秒' : '已过期/无环境'}
-                                </div>
-                            </td>
-                            <td>
-                                <span style="display:inline-block; max-width: 120px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color: var(--text-muted);">
-                                    ${u.serviceToken ? u.serviceToken.substring(0,10)+'...' : '无效'}
-                                </span>
-                            </td>
-                            <td>
-                                <button class="btn btn-danger" onclick="deleteUser('${u.userId}')">删除</button>
-                            </td>
-                        </tr>
-                    `).join('');
+                    tbody.innerHTML = data.users.map(u => {
+                        let statusColor = 'var(--text-dim)';
+                        let statusText = u.claw_status || '未知';
+                        if (statusText === 'AVAILABLE') statusColor = 'var(--success)';
+                        else if (statusText.includes('401') || statusText.includes('EXPIRED')) statusColor = 'var(--danger)';
+                        else if (statusText !== '未知') statusColor = 'var(--warning)';
+
+                        let pct = 0;
+                        let barClass = '';
+                        if (u.remain_sec > 0) {
+                            // 默认满额取 24小时为基准 (86400秒) 以显示进度条比例
+                            pct = Math.min(100, Math.max(0, (u.remain_sec / 86400) * 100));
+                            if (pct < 15) barClass = 'expired';
+                            else if (pct < 40) barClass = 'warning';
+                        } else {
+                            barClass = 'expired';
+                        }
+
+                        const remainStr = u.remain_sec > 0
+                            ? `${Math.floor(u.remain_sec / 3600)} 小时 ${Math.floor((u.remain_sec % 3600) / 60)} 分`
+                            : '已过期/无环境';
+
+                        return `
+                            <tr>
+                                <td><strong style="color:var(--primary)" class="mono">${escapeHTML(u.userId)}</strong></td>
+                                <td>${escapeHTML(u.name || '(未命名)')}</td>
+                                <td>
+                                    <span style="display:inline-flex; align-items:center; gap:6px; font-weight:600; color:${statusColor}">
+                                        <span style="width:7px; height:7px; border-radius:50%; background-color:${statusColor}"></span>
+                                        ${statusText}
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="remain-badge">
+                                        <span class="mono" style="font-size: 13px;">${remainStr}</span>
+                                        <div class="progress-bar-bg">
+                                            <div class="progress-bar ${barClass} countdown-bar" data-remain="${u.remain_sec}" style="width: ${pct}%"></div>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td class="hide-mobile">
+                                    <span class="mono" style="color: var(--text-muted); opacity: 0.85;">
+                                        ${u.serviceToken ? u.serviceToken.substring(0, 12) + '...' : '无效'}
+                                    </span>
+                                </td>
+                                <td style="text-align: center;">
+                                    <button class="btn btn-danger btn-sm" data-user-id="${escapeHTML(u.userId)}" onclick="deleteUser(this)">
+                                        <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i> 删除
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                    lucide.createIcons();
                 } else {
-                    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">当前未加载任何凭证</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">当前无可用 Xiaomi Claw 凭证账号，请导入</td></tr>';
                 }
-            } catch(e) {
-                if (e.message !== 'UNAUTHORIZED') {
-                    console.error("加载用户列表失败", e);
-                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') console.error("加载用户列表失败", e);
             }
         }
 
-        async function deleteUser(uid) {
-            if(!confirm(`确定要移除账号 ${uid} 吗？\n删除后下一次轮换将不再拉起该账号的请求。`)) return;
+        async function deleteUser(btn) {
+            const uid = btn.getAttribute('data-user-id');
+            if (!await showConfirm('移除账号确认', `确定要移除账号 ${uid} 吗？\n删除后所有运行实例将停止。`, true)) return;
             try {
-                const res = await apiFetch(`/api/users/delete/${uid}`, {method: 'DELETE'});
-                if(res.ok) {
-                    showToast('删除成功');
+                const res = await apiFetch(`/api/users/delete/${encodeURIComponent(uid)}`, { method: 'DELETE' });
+                if (res.ok) {
+                    showToast('账号删除成功');
                     fetchUsers();
                 } else {
-                    showToast('删除失败: '+ (await res.text()), 'error');
+                    showToast('删除失败: ' + (await res.text()), 'error');
                 }
-            } catch(e) {
+            } catch (e) {
                 showToast('网络请求异常', 'error');
             }
         }
 
         async function triggerRebuild() {
             const btn = document.getElementById('rebuildBtn');
-            const originalText = btn.textContent;
+            const originalHTML = btn.innerHTML;
             btn.disabled = true;
-            btn.textContent = 'Rebuilding...';
+            btn.innerHTML = '<i data-lucide="loader" style="width:14px; animation:spin 1s linear infinite"></i> 重建中...';
+            lucide.createIcons();
 
             try {
                 const res = await apiFetch('/api/rebuild', { method: 'POST' });
                 const data = await res.json();
                 if (res.ok) {
-                    showToast(data.message || '已发送 rebuild 请求');
-                    await fetchUsers();
+                    showToast(data.message || '重建指令已发出');
+                    setTimeout(fetchUsers, 1500);
                 } else {
-                    showToast(data.detail || data.message || 'rebuild 失败', 'error');
+                    showToast(data.detail || data.message || '重建失败', 'error');
                 }
             } catch (e) {
-                if (e.message !== 'UNAUTHORIZED') {
-                    showToast('rebuild 请求失败', 'error');
-                }
+                if (e.message !== 'UNAUTHORIZED') showToast('重建网络请求失败', 'error');
             } finally {
                 btn.disabled = false;
-                btn.textContent = originalText;
+                btn.innerHTML = originalHTML;
+                lucide.createIcons();
             }
         }
 
-        function openModal() {
+        function openImportModal() {
             document.getElementById('cookieInput').value = '';
             document.getElementById('importModal').classList.add('active');
         }
 
-        function closeModal() {
+        function closeImportModal() {
             document.getElementById('importModal').classList.remove('active');
         }
 
+        async function submitImport() {
+            const val = document.getElementById('cookieInput').value;
+            if (!val.trim()) {
+                showToast('输入内容不能为空', 'error');
+                return;
+            }
+
+            try {
+                const res = await apiFetch('/api/users/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ raw_text: val })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(`凭证添加成功: userID ${data.userId}`);
+                    closeImportModal();
+                    fetchUsers();
+                } else {
+                    showToast(data.detail || '解析未找到关键字段(userId, serviceToken)', 'error');
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') showToast('提交异常', 'error');
+            }
+        }
+
+
+        // ================= Tab 2: 模型映射 (Model Mappings) =================
+        async function fetchMappings() {
+            if (activeTab !== 'mappings') return;
+            try {
+                const res = await apiFetch('/api/model_mapping');
+                const data = await res.json();
+                const tbody = document.getElementById('mappingsBody');
+
+                const entries = Object.entries(data);
+                if (entries.length > 0) {
+                    // 按原始模型字母排序展示
+                    entries.sort((a, b) => a[0].localeCompare(b[0]));
+                    tbody.innerHTML = entries.map(([src, target]) => `
+                        <tr>
+                            <td><span class="mono" style="font-weight: 500;">${escapeHTML(src)}</span></td>
+                            <td style="text-align: center;">
+                                <div class="mapping-arrow"><i data-lucide="arrow-right" style="width: 16px;"></i></div>
+                            </td>
+                            <td><span class="mono" style="color: #c084fc; font-weight: 500;">${escapeHTML(target)}</span></td>
+                            <td style="text-align: center;">
+                                <button class="btn btn-outline btn-danger btn-sm" data-source="${escapeHTML(src)}" onclick="deleteMapping(this)">
+                                    <i data-lucide="trash-2" style="width: 13px;"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('');
+                    lucide.createIcons();
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="4" class="empty-state">当前未配置任何模型映射规则</td></tr>';
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') console.error("加载模型映射列表失败", e);
+            }
+        }
+
+        async function submitMapping() {
+            const src = document.getElementById('mappingSource').value.trim();
+            const target = document.getElementById('mappingTarget').value.trim();
+
+            if (!src || !target) {
+                showToast('请完整输入请求源模型与映射目标模型', 'error');
+                return;
+            }
+
+            try {
+                // 先获取现有的映射规则
+                const getRes = await apiFetch('/api/model_mapping');
+                const currentMappings = await getRes.json();
+
+                // 覆盖或者添加这一条
+                currentMappings[src] = target;
+
+                const putRes = await apiFetch('/api/model_mapping', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentMappings)
+                });
+
+                if (putRes.ok) {
+                    showToast('映射规则保存成功');
+                    document.getElementById('mappingSource').value = '';
+                    document.getElementById('mappingTarget').value = '';
+                    fetchMappings();
+                } else {
+                    showToast('保存映射失败', 'error');
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') showToast('保存请求异常', 'error');
+            }
+        }
+
+        async function deleteMapping(btn) {
+            const srcName = btn.getAttribute('data-source');
+            if (!await showConfirm('删除映射规则确认', `确定要删除对模型 "${srcName}" 的映射吗？`, true)) return;
+            try {
+                const res = await apiFetch(`/api/model_mapping/${encodeURIComponent(srcName)}`, {
+                    method: 'DELETE'
+                });
+                if (res.ok) {
+                    showToast('映射规则已成功移除');
+                    fetchMappings();
+                } else {
+                    showToast('删除映射失败', 'error');
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') showToast('请求异常', 'error');
+            }
+        }
+
+
+        // ================= Tab 3: OAuth API Key 监控 =================
+        async function fetchOAuthUsers() {
+            if (activeTab !== 'oauth') return;
+            try {
+                const res = await apiFetch('/api/oauth/users');
+                const data = await res.json();
+                const tbody = document.getElementById('oauthUsersBody');
+
+                if (data.users && data.users.length > 0) {
+                    tbody.innerHTML = data.users.map(u => {
+                        const displayName = u.username || u.name || u.provider_user_id;
+                        const subline = u.provider_user_id ? `ID: ${escapeHTML(u.provider_user_id)}` : '';
+                        const avatarUrl = u.avatar_url || defaultAvatar;
+                        return `
+                            <tr>
+                                <td>
+                                    <div class="user-info-cell">
+                                        <img src="${escapeHTML(avatarUrl)}" class="user-avatar" onerror="this.onerror=null; this.src=defaultAvatar;" />
+                                        <div class="user-names">
+                                            <strong style="color:var(--primary)">${escapeHTML(displayName)}</strong>
+                                            <span style="font-size: 11px; color: var(--text-dim);">${subline}</span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td style="text-align: right;"><span class="metric-number mono">${Number(u.requests_today || 0).toLocaleString()}</span></td>
+                                <td style="text-align: right;"><span class="metric-number mono">${Number(u.requests_total || 0).toLocaleString()}</span></td>
+                                <td class="hide-mobile"><span style="font-size:13px;">${escapeHTML(formatUnixTime(u.last_request_at))}</span></td>
+                                <td class="hide-mobile"><span class="mono" style="opacity: 0.85; color: var(--text-muted);">${escapeHTML(u.api_key_preview || '')}</span></td>
+                                <td style="text-align: center;">
+                                    <button class="btn btn-outline btn-danger btn-sm" data-provider="${escapeHTML(u.provider || 'linux.do')}" data-user-id="${escapeHTML(u.provider_user_id || '')}" onclick="rotateOAuthKey(this)">
+                                        <i data-lucide="key-round" style="width: 13px;"></i> 重置 Key
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                    lucide.createIcons();
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">目前还没有 OAuth API 授权使用记录</td></tr>';
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') console.error("加载 OAuth 用户列表失败", e);
+            }
+        }
+
+        async function rotateOAuthKey(btn) {
+            const provider = btn.getAttribute('data-provider');
+            const providerUserId = btn.getAttribute('data-user-id');
+            if (!await showConfirm('警告：重置 API 密钥', `确定要重置外部用户 [${providerUserId}] 的 API 令牌密钥吗？\n警告：重置后现有 API Key 将彻底失效，且该操作无法撤销。`, true)) return;
+            try {
+                const res = await apiFetch('/api/oauth/users/rotate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider, provider_user_id: providerUserId })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showPromptModal('重置成功！', '请立即复制保存下面的新 API Key (关闭窗口后将无法再次查看)：', data.api_key || '');
+                    showToast('Key 已成功重置');
+                    fetchOAuthUsers();
+                } else {
+                    showToast(data.detail || data.error || '重置失败', 'error');
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') showToast('重置请求异常', 'error');
+            }
+        }
+
+
+        // ================= 登录与登出认证逻辑 =================
         async function submitLogin() {
             const username = document.getElementById('loginUsername').value.trim() || preferredUsername;
             const password = document.getElementById('loginPassword').value;
             if (!password) {
-                showToast('密码不能为空', 'error');
+                showToast('凭证密码不能为空', 'error');
                 return;
             }
 
             try {
                 const res = await fetch('/api/auth/login', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: { 'Content-Type': 'application/json' },
                     credentials: 'same-origin',
                     body: JSON.stringify({ username, password })
                 });
                 const data = await res.json();
                 if (!res.ok) {
-                    showToast(data.detail || '登录失败', 'error');
+                    showToast(data.detail || '密码校验失败，请重试', 'error');
                     return;
                 }
                 webAuthReady = true;
                 document.getElementById('loginPassword').value = '';
-                setShellVisibility(true);
+                setShellVisibility('admin');
                 showToast('登录成功');
                 await initializeDashboard();
             } catch (e) {
-                showToast('登录请求失败', 'error');
+                showToast('身份验证请求异常', 'error');
             }
         }
 
@@ -678,36 +1813,9 @@
                 });
             } finally {
                 webAuthReady = false;
-                setShellVisibility(false);
+                setShellVisibility('login');
                 document.getElementById('loginPassword').value = '';
-            }
-        }
-
-        async function submitImport() {
-            const val = document.getElementById('cookieInput').value;
-            if(!val.trim()) {
-                showToast('输入不能为空', 'error'); return;
-            }
-
-            try {
-                const res = await apiFetch('/api/users/add', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ raw_text: val })
-                });
-                
-                const data = await res.json();
-                if(res.ok) {
-                    showToast(`成功提取并存入 userId: ${data.userId}`);
-                    closeModal();
-                    fetchUsers();
-                } else {
-                    showToast(data.detail || '解析缺少必要字段', 'error');
-                }
-            } catch(e) {
-                if (e.message !== 'UNAUTHORIZED') {
-                    showToast('提交异常', 'error');
-                }
+                showToast('已成功登出');
             }
         }
 
@@ -716,38 +1824,92 @@
             startStatusPolling();
         }
 
-        async function bootstrap() {
-            try {
-                const session = await fetchSession();
-                if (session.enabled && !session.authenticated) {
-                    setShellVisibility(false);
-                    return;   // 认证未通过，不启动轮询，不触发 fetchStatus
-                }
-                webAuthReady = true;
-                setShellVisibility(true);
-                await initializeDashboard();
-            } catch (e) {
-                setShellVisibility(false);
-                showToast('初始化失败，请刷新重试', 'error');
-            }
-        }
-        
-        // 本地纯前端倒计时（不消耗任何网络请求）
+        // 本地纯前端倒计时器（不产生网络开销）
         setInterval(() => {
-            document.querySelectorAll('.countdown-text').forEach(el => {
+            document.querySelectorAll('.countdown-bar').forEach(el => {
                 let remain = parseInt(el.getAttribute('data-remain'));
                 if (remain > 0) {
                     remain--;
                     el.setAttribute('data-remain', remain);
-                    el.textContent = '剩余: ' + Math.floor(remain / 60) + ' 分 ' + (remain % 60) + ' 秒';
-                } else if (remain === 0 && el.textContent.includes('剩余')) {
-                    el.textContent = '即将或已过期...';
+
+                    // 重新渲染文字（更新相邻的文本节点，但只针对 accounts tab 活跃时）
+                    if (activeTab === 'accounts') {
+                        const remainStr = `${Math.floor(remain / 3600)} 小时 ${Math.floor((remain % 3600) / 60)} 分`;
+                        const textSpan = el.parentElement.previousElementSibling;
+                        if (textSpan && textSpan.classList.contains('mono')) {
+                            textSpan.textContent = remainStr;
+                        }
+                        // 更新进度条比例
+                        const pct = Math.min(100, Math.max(0, (remain / 86400) * 100));
+                        el.style.width = `${pct}%`;
+
+                        // 动态更新进度条颜色
+                        el.className = 'progress-bar';
+                        if (pct < 15) el.classList.add('expired');
+                        else if (pct < 40) el.classList.add('warning');
+                    }
+                } else if (remain === 0) {
+                    if (activeTab === 'accounts') {
+                        const textSpan = el.parentElement.previousElementSibling;
+                        if (textSpan && textSpan.classList.contains('mono') && textSpan.textContent !== '已过期/无环境') {
+                            textSpan.textContent = '已过期/无环境';
+                            el.style.width = '0%';
+                            el.className = 'progress-bar expired';
+                        }
+                    }
                 }
             });
         }, 1000);
 
-        window.addEventListener('DOMContentLoaded', bootstrap);
+        async function bootstrap() {
+            lucide.createIcons();
 
+            // 动态填充当前域名及示例配置中的 API 接口地址
+            const origin = window.location.origin;
+            const openaiEl = document.getElementById('openaiBaseUrl');
+            if (openaiEl) openaiEl.textContent = `${origin}/v1`;
+            const claudeEl = document.getElementById('claudeBaseUrl');
+            if (claudeEl) claudeEl.textContent = `${origin}/anthropic`;
+            const exampleApiEl = document.getElementById('exampleApiUrl');
+            if (exampleApiEl) exampleApiEl.textContent = `${origin}/v1`;
+
+            // 1. 检查 URL 参数是否指示普通用户模式（OAuth 回调重定向带 ?mode=user）
+            const urlParams = new URLSearchParams(window.location.search);
+            const isUserMode = urlParams.get('mode') === 'user';
+            if (isUserMode) {
+                setShellVisibility('user');
+                await loadUserDashboard();
+                return;
+            }
+
+            // 2. 探测是否存在有效的 OAuth 用户 Cookie（HttpOnly，无法用 JS 读取，通过 API 探测）
+            try {
+                const meRes = await fetch('/api/oauth/me', { credentials: 'same-origin' });
+                if (meRes.ok) {
+                    setShellVisibility('user');
+                    await loadUserDashboard();
+                    return;
+                }
+            } catch (_) { /* 非 OAuth 用户，继续管理员流程 */ }
+
+            // 3. 否则，执行管理员 Session 检测流程
+            try {
+                const session = await fetchSession();
+                if (session.enabled && !session.authenticated) {
+                    setShellVisibility('login');
+                    return;
+                }
+                webAuthReady = true;
+                setShellVisibility('admin');
+                await initializeDashboard();
+            } catch (e) {
+                setShellVisibility('login');
+                showToast('初始化鉴权校验失败，请刷新页面', 'error');
+            }
+        }
+
+        window.addEventListener('DOMContentLoaded', bootstrap);
     </script>
 </body>
+
 </html>

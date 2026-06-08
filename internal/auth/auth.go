@@ -83,7 +83,7 @@ func WebUIMiddleware() gin.HandlerFunc {
 
 func APIAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		if len(config.APIKeys) == 0 {
+		if !HasAnyAPIKey() {
 			c.Next()
 			return
 		}
@@ -98,13 +98,7 @@ func APIAuthMiddleware() gin.HandlerFunc {
 			token = c.GetHeader("api-key")
 		}
 
-		valid := false
-		for _, key := range config.APIKeys {
-			if token == key {
-				valid = true
-				break
-			}
-		}
+		valid := ValidateAndRecordAPIKey(token)
 
 		if !valid {
 			path := c.Request.URL.Path
@@ -173,6 +167,6 @@ func SessionHandler(c *gin.Context) {
 		"enabled":         len(config.WebUIPassword) > 0,
 		"authenticated":   authenticated,
 		"username":        config.WebUIUsername,
-		"ai_auth_enabled": len(config.APIKeys) > 0,
+		"ai_auth_enabled": HasAnyAPIKey(),
 	})
 }

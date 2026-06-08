@@ -10,3 +10,5 @@ gateway_snapshot.json
 *.gif
 target
 scripts/build-bridge.env
+logs/
+.env
