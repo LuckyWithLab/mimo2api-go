@@ -29,6 +29,8 @@ import (
 
 const linuxDoProvider = "linux.do"
 
+var ErrOAuthUserBanned = errors.New("oauth user is banned")
+
 type OAuthKeyRecord struct {
 	Provider       string `json:"provider"`
 	ProviderUserID string `json:"provider_user_id"`
@@ -44,6 +46,8 @@ type OAuthKeyRecord struct {
 	RequestsTotal  int64  `json:"requests_total,omitempty"`
 	RequestsToday  int64  `json:"requests_today,omitempty"`
 	RequestDay     string `json:"request_day,omitempty"`
+	BannedAt       int64  `json:"banned_at,omitempty"`
+	BanReason      string `json:"ban_reason,omitempty"`
 }
 
 type OAuthUserUsage struct {
@@ -61,6 +65,9 @@ type OAuthUserUsage struct {
 	RequestsTotal  int64  `json:"requests_total"`
 	RequestsToday  int64  `json:"requests_today"`
 	RequestDay     string `json:"request_day,omitempty"`
+	BannedAt       int64  `json:"banned_at,omitempty"`
+	BanReason      string `json:"ban_reason,omitempty"`
+	Banned         bool   `json:"banned"`
 }
 
 type OAuthKeyStore struct {
@@ -130,6 +137,8 @@ func initOAuthSchema(db *sql.DB) error {
 		requests_total INTEGER DEFAULT 0,
 		requests_today INTEGER DEFAULT 0,
 		request_day TEXT,
+		banned_at INTEGER DEFAULT 0,
+		ban_reason TEXT DEFAULT '',
 		PRIMARY KEY (provider, provider_user_id)
 	);`
 	createAPIKeyIndexSQL := `
@@ -148,7 +157,24 @@ func initOAuthSchema(db *sql.DB) error {
 	if _, err := db.Exec(createUsageIndexSQL); err != nil {
 		return err
 	}
+	if err := addOAuthColumnIfMissing(db, "banned_at", "INTEGER DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := addOAuthColumnIfMissing(db, "ban_reason", "TEXT DEFAULT ''"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func addOAuthColumnIfMissing(db *sql.DB, name, definition string) error {
+	_, err := db.Exec(fmt.Sprintf("ALTER TABLE oauth_keys ADD COLUMN %s %s", name, definition))
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return nil
+	}
+	return err
 }
 
 func (s *OAuthKeyStore) migrateLegacyJSON() error {
@@ -245,7 +271,7 @@ func (s *OAuthKeyStore) IsValidAPIKey(apiKey string) bool {
 		return false
 	}
 	var exists int
-	err := db.QueryRow("SELECT 1 FROM oauth_keys WHERE api_key = ? LIMIT 1", apiKey).Scan(&exists)
+	err := db.QueryRow("SELECT 1 FROM oauth_keys WHERE api_key = ? AND COALESCE(banned_at, 0) = 0 LIMIT 1", apiKey).Scan(&exists)
 	return err == nil && exists == 1
 }
 
@@ -263,11 +289,11 @@ func (s *OAuthKeyStore) Upsert(record OAuthKeyRecord) (OAuthKeyRecord, bool, err
 		return OAuthKeyRecord{}, false, fmt.Errorf("missing provider user id")
 	}
 
-	apiKey, err := generateAPIKey()
+	generatedAPIKey, err := generateAPIKey()
 	if err != nil {
 		return OAuthKeyRecord{}, false, err
 	}
-	record.APIKey = apiKey
+	record.APIKey = generatedAPIKey
 	now := time.Now().Unix()
 	record.CreatedAt = now
 	record.UpdatedAt = now
@@ -286,17 +312,21 @@ func (s *OAuthKeyStore) Upsert(record OAuthKeyRecord) (OAuthKeyRecord, bool, err
 		avatar_url = excluded.avatar_url,
 		updated_at = excluded.updated_at,
 		last_login_at = excluded.last_login_at
-	RETURNING api_key, created_at, last_request_at, requests_total, requests_today, COALESCE(request_day, '')
+	RETURNING api_key, created_at, last_request_at, requests_total, requests_today, COALESCE(request_day, ''), COALESCE(banned_at, 0), COALESCE(ban_reason, '')
 	`, record.Provider, record.ProviderUserID, record.Username, record.Name, record.Email, record.AvatarURL, record.APIKey,
 		record.CreatedAt, record.UpdatedAt, record.LastLoginAt, record.LastRequestAt,
 		record.RequestsTotal, record.RequestsToday, record.RequestDay).Scan(
-		&record.APIKey, &record.CreatedAt, &record.LastRequestAt, &record.RequestsTotal, &record.RequestsToday, &record.RequestDay)
+		&record.APIKey, &record.CreatedAt, &record.LastRequestAt, &record.RequestsTotal, &record.RequestsToday, &record.RequestDay,
+		&record.BannedAt, &record.BanReason)
 
 	if err != nil {
 		return OAuthKeyRecord{}, false, err
 	}
+	if record.BannedAt > 0 {
+		return record, false, ErrOAuthUserBanned
+	}
 
-	created := record.CreatedAt == now
+	created := record.APIKey == generatedAPIKey
 	return record, created, nil
 }
 
@@ -338,6 +368,76 @@ func (s *OAuthKeyStore) RotateAPIKey(provider, providerUserID string) (OAuthKeyR
 	return s.GetByProviderUser(provider, providerUserID)
 }
 
+func (s *OAuthKeyStore) BanUser(provider, providerUserID, reason string) (OAuthKeyRecord, error) {
+	s.mu.RLock()
+	db := s.db
+	s.mu.RUnlock()
+	if db == nil {
+		return OAuthKeyRecord{}, fmt.Errorf("oauth key store is not initialized")
+	}
+	if provider == "" {
+		provider = linuxDoProvider
+	}
+	if providerUserID == "" {
+		return OAuthKeyRecord{}, fmt.Errorf("missing provider user id")
+	}
+
+	apiKey, err := generateAPIKey()
+	if err != nil {
+		return OAuthKeyRecord{}, err
+	}
+	now := time.Now().Unix()
+	result, err := db.Exec(`
+	UPDATE oauth_keys
+	SET api_key = ?, banned_at = ?, ban_reason = ?, updated_at = ?
+	WHERE provider = ? AND provider_user_id = ?
+	`, apiKey, now, strings.TrimSpace(reason), now, provider, providerUserID)
+	if err != nil {
+		return OAuthKeyRecord{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return OAuthKeyRecord{}, err
+	}
+	if affected == 0 {
+		return OAuthKeyRecord{}, sql.ErrNoRows
+	}
+	return s.GetByProviderUser(provider, providerUserID)
+}
+
+func (s *OAuthKeyStore) UnbanUser(provider, providerUserID string) (OAuthKeyRecord, error) {
+	s.mu.RLock()
+	db := s.db
+	s.mu.RUnlock()
+	if db == nil {
+		return OAuthKeyRecord{}, fmt.Errorf("oauth key store is not initialized")
+	}
+	if provider == "" {
+		provider = linuxDoProvider
+	}
+	if providerUserID == "" {
+		return OAuthKeyRecord{}, fmt.Errorf("missing provider user id")
+	}
+
+	now := time.Now().Unix()
+	result, err := db.Exec(`
+	UPDATE oauth_keys
+	SET banned_at = 0, ban_reason = '', updated_at = ?
+	WHERE provider = ? AND provider_user_id = ?
+	`, now, provider, providerUserID)
+	if err != nil {
+		return OAuthKeyRecord{}, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return OAuthKeyRecord{}, err
+	}
+	if affected == 0 {
+		return OAuthKeyRecord{}, sql.ErrNoRows
+	}
+	return s.GetByProviderUser(provider, providerUserID)
+}
+
 func (s *OAuthKeyStore) GetByProviderUser(provider, providerUserID string) (OAuthKeyRecord, error) {
 	s.mu.RLock()
 	db := s.db
@@ -353,7 +453,7 @@ func (s *OAuthKeyStore) GetByProviderUser(provider, providerUserID string) (OAut
 	err := db.QueryRow(`
 	SELECT provider, provider_user_id, username, name, email, avatar_url, api_key,
 		created_at, updated_at, last_login_at, last_request_at,
-		requests_total, requests_today, COALESCE(request_day, '')
+		requests_total, requests_today, COALESCE(request_day, ''), COALESCE(banned_at, 0), COALESCE(ban_reason, '')
 	FROM oauth_keys
 	WHERE provider = ? AND provider_user_id = ?
 	`, provider, providerUserID).Scan(
@@ -361,6 +461,7 @@ func (s *OAuthKeyStore) GetByProviderUser(provider, providerUserID string) (OAut
 		&record.Email, &record.AvatarURL, &record.APIKey, &record.CreatedAt,
 		&record.UpdatedAt, &record.LastLoginAt, &record.LastRequestAt,
 		&record.RequestsTotal, &record.RequestsToday, &record.RequestDay,
+		&record.BannedAt, &record.BanReason,
 	)
 	if err != nil {
 		return OAuthKeyRecord{}, err
@@ -386,7 +487,7 @@ func (s *OAuthKeyStore) RecordAPIKeyRequest(apiKey string) bool {
 		requests_total = requests_total + 1,
 		last_request_at = ?,
 		updated_at = ?
-	WHERE api_key = ?
+	WHERE api_key = ? AND COALESCE(banned_at, 0) = 0
 	`, today, today, now.Unix(), now.Unix(), apiKey)
 	if err != nil {
 		return false
@@ -409,7 +510,7 @@ func (s *OAuthKeyStore) ListUsage() []OAuthUserUsage {
 		created_at, updated_at, last_login_at, last_request_at,
 		requests_total,
 		CASE WHEN COALESCE(request_day, '') = ? THEN requests_today ELSE 0 END AS requests_today,
-		COALESCE(request_day, '')
+		COALESCE(request_day, ''), COALESCE(banned_at, 0), COALESCE(ban_reason, '')
 	FROM oauth_keys
 	`, today)
 	if err != nil {
@@ -425,6 +526,7 @@ func (s *OAuthKeyStore) ListUsage() []OAuthUserUsage {
 			&record.Email, &record.AvatarURL, &record.APIKey, &record.CreatedAt,
 			&record.UpdatedAt, &record.LastLoginAt, &record.LastRequestAt,
 			&record.RequestsTotal, &record.RequestsToday, &record.RequestDay,
+			&record.BannedAt, &record.BanReason,
 		); err != nil {
 			return usages
 		}
@@ -443,6 +545,9 @@ func (s *OAuthKeyStore) ListUsage() []OAuthUserUsage {
 			RequestsTotal:  record.RequestsTotal,
 			RequestsToday:  record.RequestsToday,
 			RequestDay:     record.RequestDay,
+			BannedAt:       record.BannedAt,
+			BanReason:      record.BanReason,
+			Banned:         record.BannedAt > 0,
 		})
 	}
 	sortOAuthUsage(usages)
@@ -551,6 +656,64 @@ func OAuthRotateKeyHandler(c *gin.Context) {
 	})
 }
 
+func OAuthBanUserHandler(c *gin.Context) {
+	var req struct {
+		Provider       string `json:"provider"`
+		ProviderUserID string `json:"provider_user_id"`
+		Reason         string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	record, err := oauthKeys.BanUser(req.Provider, req.ProviderUserID, req.Reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "oauth user not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ban oauth user", "detail": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":               true,
+		"provider":         record.Provider,
+		"provider_user_id": record.ProviderUserID,
+		"banned_at":        record.BannedAt,
+		"ban_reason":       record.BanReason,
+	})
+}
+
+func OAuthUnbanUserHandler(c *gin.Context) {
+	var req struct {
+		Provider       string `json:"provider"`
+		ProviderUserID string `json:"provider_user_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	record, err := oauthKeys.UnbanUser(req.Provider, req.ProviderUserID)
+	if errors.Is(err, sql.ErrNoRows) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "oauth user not found"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to unban oauth user", "detail": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"ok":               true,
+		"provider":         record.Provider,
+		"provider_user_id": record.ProviderUserID,
+		"banned_at":        record.BannedAt,
+	})
+}
+
 func OAuthLoginHandler(c *gin.Context) {
 	if !oauthConfigReady() {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "OAuth is not configured"})
@@ -627,6 +790,11 @@ func OAuthCallbackHandler(c *gin.Context) {
 		Email:          user.Email,
 		AvatarURL:      user.AvatarURL,
 	})
+	if errors.Is(err, ErrOAuthUserBanned) {
+		c.SetCookie("mimo_user_key", "", -1, "/", "", config.WebUICookieSecure, true)
+		c.JSON(http.StatusForbidden, gin.H{"error": "oauth user is banned"})
+		return
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save api key", "detail": err.Error()})
 		return
@@ -799,14 +967,14 @@ func (s *OAuthKeyStore) GetByAPIKey(apiKey string) (OAuthKeyRecord, error) {
 	err := db.QueryRow(`
 	SELECT provider, provider_user_id, username, name, email, avatar_url, api_key,
 		created_at, updated_at, last_login_at, last_request_at,
-		requests_total, COALESCE(requests_today, 0), COALESCE(request_day, '')
+		requests_total, COALESCE(requests_today, 0), COALESCE(request_day, ''), COALESCE(banned_at, 0), COALESCE(ban_reason, '')
 	FROM oauth_keys
-	WHERE api_key = ?
+	WHERE api_key = ? AND COALESCE(banned_at, 0) = 0
 	`, apiKey).Scan(
 		&r.Provider, &r.ProviderUserID, &r.Username, &r.Name,
 		&r.Email, &r.AvatarURL, &r.APIKey, &r.CreatedAt,
 		&r.UpdatedAt, &r.LastLoginAt, &r.LastRequestAt,
-		&r.RequestsTotal, &r.RequestsToday, &r.RequestDay,
+		&r.RequestsTotal, &r.RequestsToday, &r.RequestDay, &r.BannedAt, &r.BanReason,
 	)
 	return r, err
 }

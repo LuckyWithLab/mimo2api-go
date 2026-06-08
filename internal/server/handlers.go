@@ -726,6 +726,21 @@ attemptLoop:
 		if firstMsgType == "finish" {
 			state.CleanupPendingRequest(nodeReqID)
 			durationMs := float64(time.Since(startTime).Milliseconds())
+
+			// 检测空 body 异常：200 + 空 body 应视为上游错误
+			if statusCode == 200 && initialBody == "" {
+				statusCode = http.StatusBadGateway
+				state.Metrics.RecordRequestFinished(routeKey, statusCode, durationMs, ttftMs, false)
+				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=upstream_empty_body", reqID, nodeKey, routeKey, int64(durationMs), int64(ttftMs))
+				if responseCommitted {
+					writeSSEError(c.Writer, flusher, "Gateway Error: 上游返回空响应")
+				} else {
+					writeErrorResponse(c, http.StatusBadGateway, "Gateway Error: 上游返回空响应")
+				}
+				return
+			}
+
 			state.Metrics.RecordRequestFinished(routeKey, statusCode, durationMs, ttftMs, true)
 			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, true)
 			if usage, ok := firstMsg["usage"].(map[string]interface{}); ok {
@@ -748,9 +763,6 @@ attemptLoop:
 				return
 			}
 
-			if initialBody == "" {
-				log.Printf("[WARN] req=%s node=%s route=%s reason=empty_body_nonstream", reqID, nodeKey, routeKey)
-			}
 			applyResponseHeaders(c, responseHeaders)
 			c.Writer.Header().Set("Content-Type", contentType)
 			c.Data(statusCode, contentType, []byte(initialBody))
@@ -800,8 +812,15 @@ attemptLoop:
 
 			state.CleanupPendingRequest(nodeReqID)
 
-			if rawBody == "" {
-				log.Printf("[WARN] req=%s node=%s route=%s reason=empty_raw_body_nonstream", reqID, nodeKey, routeKey)
+			// 检测空 body 异常：200 + 空 body 应视为上游错误
+			if statusCode == 200 && rawBody == "" {
+				statusCode = http.StatusBadGateway
+				durationMs := float64(time.Since(startTime).Milliseconds())
+				state.Metrics.RecordRequestFinished(routeKey, statusCode, durationMs, ttftMs, false)
+				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
+				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=upstream_empty_body", reqID, nodeKey, routeKey, int64(durationMs), int64(ttftMs))
+				writeErrorResponse(c, http.StatusBadGateway, "Gateway Error: 上游返回空响应")
+				return
 			}
 
 			applyResponseHeaders(c, responseHeaders)

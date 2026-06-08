@@ -223,6 +223,12 @@
             border-color: #ffd1d1;
         }
 
+        .badge.error {
+            color: var(--danger);
+            background: #ffe9e9;
+            border-color: #ffd1d1;
+        }
+
         .badge.success {
             color: #1e7e34;
             background: #e6f4ea;
@@ -1043,16 +1049,17 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
                         <thead>
                             <tr>
                                 <th>Linux.do 授权用户</th>
+                                <th>状态</th>
                                 <th style="text-align: right;">今日请求次数</th>
                                 <th style="text-align: right;">累计请求总数</th>
                                 <th class="hide-mobile">最近请求时间</th>
                                 <th class="hide-mobile">API Key 预览</th>
-                                <th style="text-align: center; width: 140px;">操作</th>
+                                <th style="text-align: center; width: 220px;">操作</th>
                             </tr>
                         </thead>
                         <tbody id="oauthUsersBody">
                             <tr>
-                                <td colspan="6" class="empty-state">数据加载中...</td>
+                                <td colspan="7" class="empty-state">数据加载中...</td>
                             </tr>
                         </tbody>
                     </table>
@@ -1718,6 +1725,8 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
                         const displayName = u.username || u.name || u.provider_user_id;
                         const subline = u.provider_user_id ? `ID: ${escapeHTML(u.provider_user_id)}` : '';
                         const avatarUrl = u.avatar_url || defaultAvatar;
+                        const isBanned = !!u.banned;
+                        const banReason = u.ban_reason ? `<div style="font-size:11px;color:var(--danger);margin-top:3px;">${escapeHTML(u.ban_reason)}</div>` : '';
                         return `
                             <tr>
                                 <td>
@@ -1729,21 +1738,29 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
                                         </div>
                                     </div>
                                 </td>
+                                <td>
+                                    <span class="badge ${isBanned ? 'error' : 'success'}">${isBanned ? '已封禁' : '正常'}</span>
+                                    ${banReason}
+                                </td>
                                 <td style="text-align: right;"><span class="metric-number mono">${Number(u.requests_today || 0).toLocaleString()}</span></td>
                                 <td style="text-align: right;"><span class="metric-number mono">${Number(u.requests_total || 0).toLocaleString()}</span></td>
                                 <td class="hide-mobile"><span style="font-size:13px;">${escapeHTML(formatUnixTime(u.last_request_at))}</span></td>
                                 <td class="hide-mobile"><span class="mono" style="opacity: 0.85; color: var(--text-muted);">${escapeHTML(u.api_key_preview || '')}</span></td>
-                                <td style="text-align: center;">
+                                <td style="text-align: center; display:flex; gap:6px; justify-content:center; flex-wrap:wrap;">
                                     <button class="btn btn-outline btn-danger btn-sm" data-provider="${escapeHTML(u.provider || 'linux.do')}" data-user-id="${escapeHTML(u.provider_user_id || '')}" onclick="rotateOAuthKey(this)">
-                                        <i data-lucide="key-round" style="width: 13px;"></i> 重置 Key
+                                        <i data-lucide="key-round" style="width: 13px;"></i> 重置
                                     </button>
+                                    ${isBanned
+                                        ? `<button class="btn btn-outline btn-sm" data-provider="${escapeHTML(u.provider || 'linux.do')}" data-user-id="${escapeHTML(u.provider_user_id || '')}" onclick="unbanOAuthUser(this)"><i data-lucide="shield-check" style="width: 13px;"></i> 解封</button>`
+                                        : `<button class="btn btn-outline btn-danger btn-sm" data-provider="${escapeHTML(u.provider || 'linux.do')}" data-user-id="${escapeHTML(u.provider_user_id || '')}" onclick="banOAuthUser(this)"><i data-lucide="ban" style="width: 13px;"></i> 封禁</button>`
+                                    }
                                 </td>
                             </tr>
                         `;
                     }).join('');
                     lucide.createIcons();
                 } else {
-                    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">目前还没有 OAuth API 授权使用记录</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">目前还没有 OAuth API 授权使用记录</td></tr>';
                 }
             } catch (e) {
                 if (e.message !== 'UNAUTHORIZED') console.error("加载 OAuth 用户列表失败", e);
@@ -1770,6 +1787,52 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
                 }
             } catch (e) {
                 if (e.message !== 'UNAUTHORIZED') showToast('重置请求异常', 'error');
+            }
+        }
+
+        async function banOAuthUser(btn) {
+            const provider = btn.getAttribute('data-provider');
+            const providerUserId = btn.getAttribute('data-user-id');
+            const reason = window.prompt(`请输入封禁用户 ${providerUserId} 的原因`, 'abuse') || '';
+            if (!reason.trim()) return;
+            if (!await showConfirm('封禁 OAuth 用户', `确定要封禁外部用户 [${providerUserId}] 吗？\n旧 API Key 会立即失效，用户也无法重新登录获取 Key。`, true)) return;
+            try {
+                const res = await apiFetch('/api/oauth/users/ban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider, provider_user_id: providerUserId, reason })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast('用户已封禁');
+                    fetchOAuthUsers();
+                } else {
+                    showToast(data.detail || data.error || '封禁失败', 'error');
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') showToast('封禁请求异常', 'error');
+            }
+        }
+
+        async function unbanOAuthUser(btn) {
+            const provider = btn.getAttribute('data-provider');
+            const providerUserId = btn.getAttribute('data-user-id');
+            if (!await showConfirm('解封 OAuth 用户', `确定要解除外部用户 [${providerUserId}] 的封禁吗？`, false)) return;
+            try {
+                const res = await apiFetch('/api/oauth/users/unban', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ provider, provider_user_id: providerUserId })
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast('用户已解封');
+                    fetchOAuthUsers();
+                } else {
+                    showToast(data.detail || data.error || '解封失败', 'error');
+                }
+            } catch (e) {
+                if (e.message !== 'UNAUTHORIZED') showToast('解封请求异常', 'error');
             }
         }
 

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,6 +134,60 @@ func TestOAuthKeyStoreRotatesKeyAndInvalidatesOldKey(t *testing.T) {
 	}
 	if rotated.RequestsTotal != 1 {
 		t.Fatalf("expected usage to be preserved, got %d", rotated.RequestsTotal)
+	}
+}
+
+func TestOAuthKeyStoreBansAndUnbansUser(t *testing.T) {
+	store := &OAuthKeyStore{}
+	tmp := t.TempDir()
+	if err := store.Load(filepath.Join(tmp, "oauth_keys.db"), filepath.Join(tmp, "missing_oauth_keys.json")); err != nil {
+		t.Fatalf("failed to load empty store: %v", err)
+	}
+
+	record, _, err := store.Upsert(OAuthKeyRecord{
+		Provider:       linuxDoProvider,
+		ProviderUserID: "42",
+		Username:       "linuxdo-user",
+	})
+	if err != nil {
+		t.Fatalf("failed to create key: %v", err)
+	}
+
+	banned, err := store.BanUser(linuxDoProvider, "42", "abuse")
+	if err != nil {
+		t.Fatalf("failed to ban user: %v", err)
+	}
+	if banned.BannedAt == 0 || banned.BanReason != "abuse" {
+		t.Fatalf("expected ban metadata to be set, got %+v", banned)
+	}
+	if store.IsValidAPIKey(record.APIKey) {
+		t.Fatal("expected old key to be invalid after ban")
+	}
+	if store.IsValidAPIKey(banned.APIKey) {
+		t.Fatal("expected banned user's rotated key to be rejected")
+	}
+	if store.RecordAPIKeyRequest(banned.APIKey) {
+		t.Fatal("expected banned key request not to be recorded")
+	}
+
+	_, _, err = store.Upsert(OAuthKeyRecord{
+		Provider:       linuxDoProvider,
+		ProviderUserID: "42",
+		Username:       "linuxdo-user",
+	})
+	if !errors.Is(err, ErrOAuthUserBanned) {
+		t.Fatalf("expected banned user login to be rejected, got %v", err)
+	}
+
+	unbanned, err := store.UnbanUser(linuxDoProvider, "42")
+	if err != nil {
+		t.Fatalf("failed to unban user: %v", err)
+	}
+	if unbanned.BannedAt != 0 || unbanned.BanReason != "" {
+		t.Fatalf("expected ban metadata to be cleared, got %+v", unbanned)
+	}
+	if !store.IsValidAPIKey(unbanned.APIKey) {
+		t.Fatal("expected key to become valid after unban")
 	}
 }
 

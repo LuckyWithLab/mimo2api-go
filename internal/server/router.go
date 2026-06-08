@@ -63,6 +63,8 @@ func SetupRouter() *gin.Engine {
 			protected.DELETE("/users/delete/:id", UsersDeleteHandler)
 			protected.GET("/oauth/users", auth.OAuthUsersHandler)
 			protected.POST("/oauth/users/rotate", auth.OAuthRotateKeyHandler)
+			protected.POST("/oauth/users/ban", auth.OAuthBanUserHandler)
+			protected.POST("/oauth/users/unban", auth.OAuthUnbanUserHandler)
 
 			protected.GET("/model_mapping", ModelMappingHandler)
 			protected.PUT("/model_mapping", PutModelMappingHandler)
