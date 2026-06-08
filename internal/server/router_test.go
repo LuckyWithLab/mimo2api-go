@@ -15,6 +15,7 @@ import (
 )
 
 func TestRouterV1MessagesForwarding(t *testing.T) {
+	resetGatewayStateForTest()
 	// 备份并清空可能干扰测试的配置
 	oldAPIKeys := config.APIKeys
 	oldWSAuthToken := config.WSAuthToken
@@ -23,6 +24,7 @@ func TestRouterV1MessagesForwarding(t *testing.T) {
 	defer func() {
 		config.APIKeys = oldAPIKeys
 		config.WSAuthToken = oldWSAuthToken
+		resetGatewayStateForTest()
 	}()
 
 	r := SetupRouter()
@@ -55,12 +57,8 @@ func TestRouterV1MessagesForwarding(t *testing.T) {
 					pathChan <- path
 				}
 
-				// 响应 finish，避免 http 请求悬空超时
 				reqID, _ := msg["req_id"].(string)
-				_ = wsConn.WriteJSON(map[string]interface{}{
-					"type":   "finish",
-					"req_id": reqID,
-				})
+				writeRouterTestResponse(wsConn, reqID, `data: {"id":"ok","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}`+"\n\n")
 			}
 		}
 	}()
@@ -108,6 +106,7 @@ func TestRouterV1MessagesForwarding(t *testing.T) {
 }
 
 func TestRouterV1ResponsesCompactRouting(t *testing.T) {
+	resetGatewayStateForTest()
 	oldAPIKeys := config.APIKeys
 	oldWSAuthToken := config.WSAuthToken
 	config.APIKeys = nil
@@ -115,6 +114,7 @@ func TestRouterV1ResponsesCompactRouting(t *testing.T) {
 	defer func() {
 		config.APIKeys = oldAPIKeys
 		config.WSAuthToken = oldWSAuthToken
+		resetGatewayStateForTest()
 	}()
 
 	r := SetupRouter()
@@ -146,10 +146,7 @@ func TestRouterV1ResponsesCompactRouting(t *testing.T) {
 					bodyChan <- body
 				}
 				reqID, _ := msg["req_id"].(string)
-				_ = wsConn.WriteJSON(map[string]interface{}{
-					"type":   "finish",
-					"req_id": reqID,
-				})
+				writeRouterTestResponse(wsConn, reqID, `{"id":"ok","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
 			}
 		}
 	}()
@@ -199,4 +196,24 @@ func TestRouterV1ResponsesCompactRouting(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Error("timeout waiting for body")
 	}
+}
+
+func writeRouterTestResponse(wsConn *websocket.Conn, reqID, body string) {
+	_ = wsConn.WriteJSON(map[string]interface{}{
+		"type":   "start",
+		"req_id": reqID,
+		"status": http.StatusOK,
+		"headers": map[string]string{
+			"Content-Type": "application/json",
+		},
+	})
+	_ = wsConn.WriteJSON(map[string]interface{}{
+		"type":   "chunk",
+		"req_id": reqID,
+		"body":   body,
+	})
+	_ = wsConn.WriteJSON(map[string]interface{}{
+		"type":   "finish",
+		"req_id": reqID,
+	})
 }

@@ -48,6 +48,29 @@ func TestDetectUnauthorizedResponseDoesNotTreatGenericErrorObjectAs401(t *testin
 	}
 }
 
+func TestApplyModelMappingUsesFallbackWhenMappingFileIsEmpty(t *testing.T) {
+	mappingMu.Lock()
+	oldMapping := modelMappingCache
+	modelMappingCache = map[string]string{}
+	mappingMu.Unlock()
+	t.Cleanup(func() {
+		mappingMu.Lock()
+		modelMappingCache = oldMapping
+		mappingMu.Unlock()
+	})
+
+	body := []byte(`{"model":"gpt-5.5","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+	mappedBody := applyModelMapping(body)
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(mappedBody, &got); err != nil {
+		t.Fatalf("failed to unmarshal mapped body: %v", err)
+	}
+	if got["model"] != "mimo-v2.5-pro" {
+		t.Fatalf("expected fallback mapping to mimo-v2.5-pro, got %v", got["model"])
+	}
+}
+
 func TestChatCompletionsHandlerRetriesUnauthorizedNode(t *testing.T) {
 	resetGatewayStateForTest()
 
@@ -445,5 +468,3 @@ func TestAPIAuthMiddlewareFormats(t *testing.T) {
 		t.Fatalf("unexpected error type: %v", errObj2["type"])
 	}
 }
-
-

@@ -333,14 +333,6 @@ func getMappedModel(model string) string {
 }
 
 func applyModelMapping(bodyText []byte) []byte {
-	mappingMu.RLock()
-	cacheLen := len(modelMappingCache)
-	mappingMu.RUnlock()
-
-	if cacheLen == 0 {
-		return bodyText
-	}
-
 	var data map[string]interface{}
 	if err := json.Unmarshal(bodyText, &data); err != nil {
 		return bodyText
