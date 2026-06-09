@@ -81,6 +81,11 @@ func WebUIMiddleware() gin.HandlerFunc {
 	}
 }
 
+// deprecatedKeys 存储已弃用的 API key 及其提示信息
+var deprecatedKeys = map[string]string{
+	"sk-mimo2api": "当前 api-key 已弃用，请前往 https://linux.do/t/topic/2297720 获取新 api-key。\nThis API key is deprecated. Please visit https://linux.do/t/topic/2297720 to obtain a new API key.",
+}
+
 func APIAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !HasAnyAPIKey() {
@@ -96,6 +101,30 @@ func APIAuthMiddleware() gin.HandlerFunc {
 			token = apiKey
 		} else {
 			token = c.GetHeader("api-key")
+		}
+
+		// 检查已弃用的 key
+		if msg, ok := deprecatedKeys[token]; ok {
+			path := c.Request.URL.Path
+			if strings.HasPrefix(path, "/anthropic/") || path == "/v1/messages" {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+					"type": "error",
+					"error": gin.H{
+						"type":    "authentication_error",
+						"message": msg,
+					},
+				})
+				return
+			}
+			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+				"error": gin.H{
+					"message": msg,
+					"type":    "invalid_request_error",
+					"param":   nil,
+					"code":    "api_key_deprecated",
+				},
+			})
+			return
 		}
 
 		valid := ValidateAndRecordAPIKey(token)
