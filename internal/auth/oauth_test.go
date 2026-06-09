@@ -100,6 +100,54 @@ func TestOAuthKeyStoreRecordsUsageAndPreservesItAcrossLogin(t *testing.T) {
 	}
 }
 
+func TestOAuthKeyStoreListUsagePage(t *testing.T) {
+	store := &OAuthKeyStore{}
+	tmp := t.TempDir()
+	if err := store.Load(filepath.Join(tmp, "oauth_keys.db"), filepath.Join(tmp, "missing_oauth_keys.json")); err != nil {
+		t.Fatalf("failed to load empty store: %v", err)
+	}
+
+	busy, _, err := store.Upsert(OAuthKeyRecord{Provider: linuxDoProvider, ProviderUserID: "busy", Username: "busy-user"})
+	if err != nil {
+		t.Fatalf("failed to create busy user: %v", err)
+	}
+	quiet, _, err := store.Upsert(OAuthKeyRecord{Provider: linuxDoProvider, ProviderUserID: "quiet", Username: "quiet-user"})
+	if err != nil {
+		t.Fatalf("failed to create quiet user: %v", err)
+	}
+	if _, _, err := store.Upsert(OAuthKeyRecord{Provider: linuxDoProvider, ProviderUserID: "idle", Username: "idle-user"}); err != nil {
+		t.Fatalf("failed to create idle user: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if !store.RecordAPIKeyRequest(busy.APIKey) {
+			t.Fatal("expected busy usage to be recorded")
+		}
+	}
+	if !store.RecordAPIKeyRequest(quiet.APIKey) {
+		t.Fatal("expected quiet usage to be recorded")
+	}
+
+	firstPage, total := store.ListUsagePage(2, 0)
+	if total != 3 {
+		t.Fatalf("expected total 3, got %d", total)
+	}
+	if len(firstPage) != 2 {
+		t.Fatalf("expected two rows on first page, got %d", len(firstPage))
+	}
+	if firstPage[0].ProviderUserID != "busy" || firstPage[1].ProviderUserID != "quiet" {
+		t.Fatalf("unexpected first page order: %+v", firstPage)
+	}
+
+	secondPage, total := store.ListUsagePage(2, 2)
+	if total != 3 {
+		t.Fatalf("expected total 3 on second page, got %d", total)
+	}
+	if len(secondPage) != 1 || secondPage[0].ProviderUserID != "idle" {
+		t.Fatalf("unexpected second page: %+v", secondPage)
+	}
+}
+
 func TestOAuthKeyStoreRotatesKeyAndInvalidatesOldKey(t *testing.T) {
 	store := &OAuthKeyStore{}
 	tmp := t.TempDir()

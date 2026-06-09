@@ -71,6 +71,41 @@ func TestApplyModelMappingUsesFallbackWhenMappingFileIsEmpty(t *testing.T) {
 	}
 }
 
+func TestApplyModelMappingKeepsMimoPrefix(t *testing.T) {
+	mappingMu.Lock()
+	oldMapping := modelMappingCache
+	modelMappingCache = map[string]string{}
+	mappingMu.Unlock()
+	t.Cleanup(func() {
+		mappingMu.Lock()
+		oldMapping = oldMapping
+		modelMappingCache = oldMapping
+		mappingMu.Unlock()
+	})
+
+	testCases := []struct {
+		input    string
+		expected string
+	}{
+		{"mimo-v2.5-pro-ultraspeed", "mimo-v2.5-pro-ultraspeed"},
+		{"mimo-v2-pro", "mimo-v2-pro"},
+		{"mimo-custom-model", "mimo-custom-model"},
+	}
+
+	for _, tc := range testCases {
+		body := []byte(`{"model":"` + tc.input + `","messages":[{"role":"user","content":"hello"}],"stream":true}`)
+		mappedBody := applyModelMapping(body)
+
+		var got map[string]interface{}
+		if err := json.Unmarshal(mappedBody, &got); err != nil {
+			t.Fatalf("failed to unmarshal mapped body for %s: %v", tc.input, err)
+		}
+		if got["model"] != tc.expected {
+			t.Fatalf("expected model to be %s, got %v", tc.expected, got["model"])
+		}
+	}
+}
+
 func TestChatCompletionsHandlerRetriesUnauthorizedNode(t *testing.T) {
 	resetGatewayStateForTest()
 

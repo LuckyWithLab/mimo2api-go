@@ -307,6 +307,10 @@ func getMappedModel(model string) string {
 
 	// Fuzzy match
 	lowerModel := strings.ToLower(model)
+	if strings.HasPrefix(lowerModel, "mimo-") {
+		return model
+	}
+
 	if strings.Contains(lowerModel, "opus") {
 		return "mimo-v2.5-pro"
 	}
@@ -321,11 +325,6 @@ func getMappedModel(model string) string {
 	}
 	if strings.Contains(lowerModel, "pro") {
 		return "mimo-v2.5-pro"
-	}
-
-	// If no match but it already has mimo prefix, keep it
-	if strings.HasPrefix(lowerModel, "mimo-") {
-		return model
 	}
 
 	// Default fallback

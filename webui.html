@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mimo2 控制面板</title>
+    <title>MIMO2API</title>
     <link
         href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
         rel="stylesheet">
@@ -81,6 +81,7 @@
             padding: 24px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.03), 0 1px 3px rgba(0, 0, 0, 0.02);
             transition: var(--transition);
+            min-width: 0;
         }
 
         .glass-card:hover {
@@ -155,6 +156,7 @@
             font-size: 14px;
             font-family: inherit;
             transition: var(--transition);
+            min-width: 0;
         }
 
         .text-input:focus {
@@ -651,11 +653,30 @@
             border-radius: 50%;
             border: 1px solid var(--card-border-light);
             background: #f5f5f7;
+            object-fit: cover;
+            flex: 0 0 auto;
         }
 
         .user-names {
             display: flex;
             flex-direction: column;
+        }
+
+        .oauth-list-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+
+        .pager-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
 
         /* 移动端排版优化 */
@@ -698,6 +719,19 @@
                 justify-content: center;
             }
 
+            .oauth-list-footer {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .pager-actions {
+                width: 100%;
+            }
+
+            .pager-actions .btn {
+                flex: 1;
+            }
+
             th,
             td {
                 padding: 10px 12px;
@@ -726,8 +760,14 @@
                 <div class="form-group" style="margin-bottom: 8px;">
                     <label class="form-label" for="loginPassword">
                         <i data-lucide="key-round" style="width: 14px;"></i> 密码 </label>
-                    <input id="loginPassword" class="text-input" type="password" autocomplete="current-password"
-                        placeholder="请输入凭证密码" />
+                    <div style="position: relative; width: 100%;">
+                        <input id="loginPassword" class="text-input" type="password" autocomplete="current-password"
+                            style="padding-right: 44px;" placeholder="请输入凭证密码" />
+                        <button type="button" onclick="toggleLoginPassword()" class="btn btn-outline"
+                            style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); border: none; background: transparent; padding: 4px; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer;">
+                            <i id="loginPwdIcon" data-lucide="eye" style="width: 18px;"></i>
+                        </button>
+                    </div>
                 </div>
                 <button class="btn" onclick="submitLogin()"
                     style="width: 100%; height: 46px; font-size: 15px; margin-top: 10px;">
@@ -789,9 +829,9 @@
                                 <span style="font-size: 11px; color: var(--text-dim);">可用于 OpenAI / Anthropic
                                     格式调用</span>
                             </label>
-                            <div style="display: flex; gap: 8px; align-items: center; position: relative;">
+                            <div style="display: flex; gap: 8px; align-items: center; position: relative; width: 100%; min-width: 0;">
                                 <input id="userAPIKeyInput" type="password" readonly class="text-input mono"
-                                    style="padding-right: 44px; font-size: 13px;" value="sk-mimo-..." />
+                                    style="padding-right: 44px; font-size: 13px; flex: 1; min-width: 0;" value="sk-mimo-..." />
                                 <button onclick="toggleAPIKeyVisibility()" class="btn btn-outline"
                                     style="position: absolute; right: 8px; border: none; background: transparent; padding: 4px; color: var(--text-dim); display: flex; align-items: center; justify-content: center; cursor: pointer;">
                                     <i id="keyVisibilityIcon" data-lucide="eye" style="width: 18px;"></i>
@@ -858,21 +898,27 @@
                             <div
                                 style="flex: 1; background: var(--bg-color); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--card-border-light); font-family: monospace; display: flex; justify-content: space-between; align-items: center;">
                                 <span id="openaiBaseUrl">https://[当前域名]/v1</span>
-                                <button class="btn btn-outline btn-sm" style="padding: 2px 6px; font-size: 10px;"
-                                    onclick="copyText(document.getElementById('openaiBaseUrl').textContent)">复制</button>
+                                <button class="btn" style="padding: 4px; background: transparent; border: none; color: var(--text-dim); box-shadow: none; border-radius: 6px;"
+                                    onmouseenter="this.style.background='rgba(0,0,0,0.06)'" onmouseleave="this.style.background='transparent'"
+                                    onclick="copyText(document.getElementById('openaiBaseUrl').textContent)"><i data-lucide="copy" style="width: 14px; height: 14px;"></i></button>
                             </div>
                             <div
                                 style="flex: 1; background: var(--bg-color); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--card-border-light); font-family: monospace; display: flex; justify-content: space-between; align-items: center;">
                                 <span id="claudeBaseUrl">https://[当前域名]/anthropic</span>
-                                <button class="btn btn-outline btn-sm" style="padding: 2px 6px; font-size: 10px;"
-                                    onclick="copyText(document.getElementById('claudeBaseUrl').textContent)">复制</button>
+                                <button class="btn" style="padding: 4px; background: transparent; border: none; color: var(--text-dim); box-shadow: none; border-radius: 6px;"
+                                    onmouseenter="this.style.background='rgba(0,0,0,0.06)'" onmouseleave="this.style.background='transparent'"
+                                    onclick="copyText(document.getElementById('claudeBaseUrl').textContent)"><i data-lucide="copy" style="width: 14px; height: 14px;"></i></button>
                             </div>
                         </div>
                     </div>
                     <div style="margin-top: 6px;">
                         <strong style="color: var(--text-main);">2. 配置示例 (以 OpenAI 客户端为例)</strong>
-                        <pre
-                            style="background: var(--bg-color); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--card-border-light); overflow-x: auto; margin: 6px 0 0 0; font-family: monospace; font-size: 12px; color: var(--text-muted);">
+                        <div style="position: relative;">
+                            <button class="btn" style="position: absolute; top: 8px; right: 8px; z-index: 1; padding: 6px; background: transparent; border: none; color: var(--text-dim); box-shadow: none; border-radius: 6px;"
+                                onmouseenter="this.style.background='rgba(0,0,0,0.06)'" onmouseleave="this.style.background='transparent'"
+                                onclick="copyText(document.getElementById('configExample').textContent)"><i data-lucide="copy" style="width: 15px; height: 15px;"></i></button>
+                            <pre id="configExample"
+                                style="background: var(--bg-color); padding: 12px; border-radius: var(--radius-md); border: 1px solid var(--card-border-light); overflow-x: auto; margin: 6px 0 0 0; font-family: monospace; font-size: 12px; color: var(--text-muted);">
 curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]</span>/chat/completions \
   -H "Authorization: Bearer <span style="color: var(--primary);">[您的 API Key]</span>" \
   -H "Content-Type: application/json" \
@@ -881,6 +927,7 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
     "messages": [{"role": "user", "content": "你好！"}],
     "stream": true
   }'</pre>
+                    </div>
                     </div>
                     <div
                         style="margin-top: 6px; color: var(--text-muted); font-size: 12px; display: flex; align-items: center; gap: 6px;">
@@ -1041,7 +1088,7 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
                         <p style="margin: 4px 0 0 0; font-size: 13px; color: var(--text-muted);">监控通过 Linux.do 登录获得独立
                             API Key 的外部开发者额度及今日总调用数。</p>
                     </div>
-                    <button class="btn btn-outline" onclick="fetchOAuthUsers()">
+                    <button class="btn btn-outline" onclick="fetchOAuthUsers({ reset: true })">
                         <i data-lucide="rotate-cw" style="width: 14px;"></i> 刷新数据 </button>
                 </div>
                 <div class="table-wrapper">
@@ -1063,6 +1110,17 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
                             </tr>
                         </tbody>
                     </table>
+                </div>
+                <div class="oauth-list-footer">
+                    <span id="oauthUsersPageInfo">显示 0 / 0</span>
+                    <div class="pager-actions">
+                        <button id="oauthPrevBtn" class="btn btn-outline btn-sm" onclick="changeOAuthUsersPage(-1)">
+                            <i data-lucide="chevron-left" style="width: 14px;"></i> 上一页
+                        </button>
+                        <button id="oauthNextBtn" class="btn btn-outline btn-sm" onclick="changeOAuthUsersPage(1)">
+                            下一页 <i data-lucide="chevron-right" style="width: 14px;"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1132,6 +1190,10 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
         let preferredUsername = 'admin';
         let activeTab = 'accounts';
         let currentUserKey = '';
+        const OAUTH_USERS_PAGE_SIZE = 50;
+        let oauthUsersOffset = 0;
+        let oauthUsersTotal = 0;
+        let avatarObserver = null;
         const defaultAvatar = 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%23708a7e"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>';
 
         // 辅助：获取 cookie
@@ -1262,6 +1324,60 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
             return new Date(ts * 1000).toLocaleString();
         }
 
+        function loadAvatar(img) {
+            const avatarUrl = img.getAttribute('data-avatar');
+            if (!avatarUrl || img.src === avatarUrl) return;
+            img.onerror = () => {
+                img.onerror = null;
+                img.src = defaultAvatar;
+            };
+            img.src = avatarUrl;
+            img.removeAttribute('data-avatar');
+        }
+
+        function observeLazyAvatars() {
+            const avatars = document.querySelectorAll('img.lazy-avatar[data-avatar]');
+            if (!('IntersectionObserver' in window)) {
+                avatars.forEach(loadAvatar);
+                return;
+            }
+            if (!avatarObserver) {
+                avatarObserver = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            loadAvatar(entry.target);
+                            avatarObserver.unobserve(entry.target);
+                        }
+                    });
+                }, { rootMargin: '120px 0px' });
+            }
+            avatars.forEach(img => avatarObserver.observe(img));
+        }
+
+        function updateOAuthPager(renderedCount) {
+            const pageInfo = document.getElementById('oauthUsersPageInfo');
+            const prevBtn = document.getElementById('oauthPrevBtn');
+            const nextBtn = document.getElementById('oauthNextBtn');
+            if (!pageInfo || !prevBtn || !nextBtn) return;
+
+            const start = oauthUsersTotal > 0 ? oauthUsersOffset + 1 : 0;
+            const end = oauthUsersTotal > 0 ? Math.min(oauthUsersOffset + renderedCount, oauthUsersTotal) : 0;
+            pageInfo.textContent = `显示 ${start}-${end} / ${oauthUsersTotal} · 每页 ${OAUTH_USERS_PAGE_SIZE}`;
+            prevBtn.disabled = oauthUsersOffset <= 0;
+            nextBtn.disabled = oauthUsersOffset + OAUTH_USERS_PAGE_SIZE >= oauthUsersTotal;
+        }
+
+        function changeOAuthUsersPage(direction) {
+            const nextOffset = Math.min(
+                Math.max(0, oauthUsersOffset + direction * OAUTH_USERS_PAGE_SIZE),
+                Math.max(0, oauthUsersTotal - 1)
+            );
+            const normalizedOffset = Math.floor(nextOffset / OAUTH_USERS_PAGE_SIZE) * OAUTH_USERS_PAGE_SIZE;
+            if (normalizedOffset === oauthUsersOffset) return;
+            oauthUsersOffset = normalizedOffset;
+            fetchOAuthUsers();
+        }
+
         // 多视图控制：管理员后台 (admin) / 普通用户面板 (user) / 登录界面 (login)
         function setShellVisibility(mode) {
             document.getElementById('appShell').classList.toggle('hidden', mode !== 'admin');
@@ -1368,6 +1484,19 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
             } catch (e) {
                 showToast('同步用量中心数据失败', 'error');
             }
+        }
+
+        function toggleLoginPassword() {
+            const input = document.getElementById('loginPassword');
+            const icon = document.getElementById('loginPwdIcon');
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.setAttribute('data-lucide', 'eye-off');
+            } else {
+                input.type = 'password';
+                icon.setAttribute('data-lucide', 'eye');
+            }
+            lucide.createIcons();
         }
 
         function toggleAPIKeyVisibility() {
@@ -1713,15 +1842,24 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
 
 
         // ================= Tab 3: OAuth API Key 监控 =================
-        async function fetchOAuthUsers() {
+        async function fetchOAuthUsers({ reset = false } = {}) {
             if (activeTab !== 'oauth') return;
+            if (reset) oauthUsersOffset = 0;
             try {
-                const res = await apiFetch('/api/oauth/users');
+                const res = await apiFetch(`/api/oauth/users?limit=${OAUTH_USERS_PAGE_SIZE}&offset=${oauthUsersOffset}`);
                 const data = await res.json();
                 const tbody = document.getElementById('oauthUsersBody');
+                const users = Array.isArray(data.users) ? data.users : [];
+                oauthUsersTotal = Number(data.total ?? users.length);
+                oauthUsersOffset = Number(data.offset ?? oauthUsersOffset);
 
-                if (data.users && data.users.length > 0) {
-                    tbody.innerHTML = data.users.map(u => {
+                if (users.length === 0 && oauthUsersTotal > 0 && oauthUsersOffset >= oauthUsersTotal) {
+                    oauthUsersOffset = Math.floor((oauthUsersTotal - 1) / OAUTH_USERS_PAGE_SIZE) * OAUTH_USERS_PAGE_SIZE;
+                    return fetchOAuthUsers();
+                }
+
+                if (users.length > 0) {
+                    tbody.innerHTML = users.map(u => {
                         const displayName = u.username || u.name || u.provider_user_id;
                         const subline = u.provider_user_id ? `ID: ${escapeHTML(u.provider_user_id)}` : '';
                         const avatarUrl = u.avatar_url || defaultAvatar;
@@ -1731,7 +1869,7 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
                             <tr>
                                 <td>
                                     <div class="user-info-cell">
-                                        <img src="${escapeHTML(avatarUrl)}" class="user-avatar" onerror="this.onerror=null; this.src=defaultAvatar;" />
+                                        <img src="${escapeHTML(defaultAvatar)}" data-avatar="${escapeHTML(avatarUrl)}" class="user-avatar lazy-avatar" loading="lazy" decoding="async" referrerpolicy="no-referrer" alt="" />
                                         <div class="user-names">
                                             <strong style="color:var(--primary)">${escapeHTML(displayName)}</strong>
                                             <span style="font-size: 11px; color: var(--text-dim);">${subline}</span>
@@ -1759,9 +1897,11 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
                         `;
                     }).join('');
                     lucide.createIcons();
+                    observeLazyAvatars();
                 } else {
                     tbody.innerHTML = '<tr><td colspan="7" class="empty-state">目前还没有 OAuth API 授权使用记录</td></tr>';
                 }
+                updateOAuthPager(users.length);
             } catch (e) {
                 if (e.message !== 'UNAUTHORIZED') console.error("加载 OAuth 用户列表失败", e);
             }
@@ -1793,14 +1933,12 @@ curl <span id="exampleApiUrl" style="color: var(--primary);">[API 接口地址]<
         async function banOAuthUser(btn) {
             const provider = btn.getAttribute('data-provider');
             const providerUserId = btn.getAttribute('data-user-id');
-            const reason = window.prompt(`请输入封禁用户 ${providerUserId} 的原因`, 'abuse') || '';
-            if (!reason.trim()) return;
             if (!await showConfirm('封禁 OAuth 用户', `确定要封禁外部用户 [${providerUserId}] 吗？\n旧 API Key 会立即失效，用户也无法重新登录获取 Key。`, true)) return;
             try {
                 const res = await apiFetch('/api/oauth/users/ban', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ provider, provider_user_id: providerUserId, reason })
+                    body: JSON.stringify({ provider, provider_user_id: providerUserId, reason: 'abuse' })
                 });
                 const data = await res.json();
                 if (res.ok) {

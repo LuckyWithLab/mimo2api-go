@@ -15,7 +15,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -497,24 +496,45 @@ func (s *OAuthKeyStore) RecordAPIKeyRequest(apiKey string) bool {
 }
 
 func (s *OAuthKeyStore) ListUsage() []OAuthUserUsage {
+	usages, _ := s.ListUsagePage(0, 0)
+	return usages
+}
+
+func (s *OAuthKeyStore) ListUsagePage(limit, offset int) ([]OAuthUserUsage, int) {
 	s.mu.RLock()
 	db := s.db
 	s.mu.RUnlock()
 	if db == nil {
-		return nil
+		return nil, 0
+	}
+
+	total := 0
+	if err := db.QueryRow(`SELECT COUNT(*) FROM oauth_keys`).Scan(&total); err != nil {
+		return nil, 0
 	}
 
 	today := time.Now().Format("2006-01-02")
-	rows, err := db.Query(`
+	query := `
 	SELECT provider, provider_user_id, username, name, email, avatar_url, api_key,
 		created_at, updated_at, last_login_at, last_request_at,
 		requests_total,
 		CASE WHEN COALESCE(request_day, '') = ? THEN requests_today ELSE 0 END AS requests_today,
 		COALESCE(request_day, ''), COALESCE(banned_at, 0), COALESCE(ban_reason, '')
 	FROM oauth_keys
-	`, today)
+	ORDER BY requests_today DESC, requests_total DESC, last_request_at DESC
+	`
+	args := []interface{}{today}
+	if limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		if offset < 0 {
+			offset = 0
+		}
+		args = append(args, limit, offset)
+	}
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
-		return nil
+		return nil, total
 	}
 	defer rows.Close()
 
@@ -528,7 +548,7 @@ func (s *OAuthKeyStore) ListUsage() []OAuthUserUsage {
 			&record.RequestsTotal, &record.RequestsToday, &record.RequestDay,
 			&record.BannedAt, &record.BanReason,
 		); err != nil {
-			return usages
+			return usages, total
 		}
 		usages = append(usages, OAuthUserUsage{
 			Provider:       record.Provider,
@@ -550,20 +570,7 @@ func (s *OAuthKeyStore) ListUsage() []OAuthUserUsage {
 			Banned:         record.BannedAt > 0,
 		})
 	}
-	sortOAuthUsage(usages)
-	return usages
-}
-
-func sortOAuthUsage(usages []OAuthUserUsage) {
-	sort.Slice(usages, func(i, j int) bool {
-		if usages[i].RequestsToday != usages[j].RequestsToday {
-			return usages[i].RequestsToday > usages[j].RequestsToday
-		}
-		if usages[i].RequestsTotal != usages[j].RequestsTotal {
-			return usages[i].RequestsTotal > usages[j].RequestsTotal
-		}
-		return usages[i].LastRequestAt > usages[j].LastRequestAt
-	})
+	return usages, total
 }
 
 func generateAPIKey() (string, error) {
@@ -618,8 +625,34 @@ func ValidateAndRecordAPIKey(token string) bool {
 }
 
 func OAuthUsersHandler(c *gin.Context) {
+	limit := 100
+	if rawLimit := c.Query("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err == nil {
+			limit = parsed
+		}
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+
+	offset := 0
+	if rawOffset := c.Query("offset"); rawOffset != "" {
+		parsed, err := strconv.Atoi(rawOffset)
+		if err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
+
+	users, total := oauthKeys.ListUsagePage(limit, offset)
 	c.JSON(http.StatusOK, gin.H{
-		"users": oauthKeys.ListUsage(),
+		"users":  users,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
 	})
 }
 
