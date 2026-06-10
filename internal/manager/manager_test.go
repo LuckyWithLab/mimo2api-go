@@ -1,18 +1,23 @@
 package manager
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"mimo2api/internal/models"
 )
 
-func TestWaitForSignalSeesPendingRebuildImmediately(t *testing.T) {
-	m := &AccountManager{
+func newTestManager() *AccountManager {
+	return &AccountManager{
 		Users:          make(map[string]models.UserRecord),
 		LifecycleStops: make(map[string]chan struct{}),
 		rebuildCh:      make(chan struct{}),
 	}
+}
+
+func TestWaitForSignalSeesPendingRebuildImmediately(t *testing.T) {
+	m := newTestManager()
 	stopCh := make(chan struct{})
 
 	m.TriggerRebuild()
@@ -27,11 +32,7 @@ func TestWaitForSignalSeesPendingRebuildImmediately(t *testing.T) {
 }
 
 func TestWaitForSignalReturnsStopForClosedLifecycle(t *testing.T) {
-	m := &AccountManager{
-		Users:          make(map[string]models.UserRecord),
-		LifecycleStops: make(map[string]chan struct{}),
-		rebuildCh:      make(chan struct{}),
-	}
+	m := newTestManager()
 	stopCh := make(chan struct{})
 	close(stopCh)
 
@@ -42,11 +43,7 @@ func TestWaitForSignalReturnsStopForClosedLifecycle(t *testing.T) {
 }
 
 func TestWaitForSignalWakesOnBroadcastRebuild(t *testing.T) {
-	m := &AccountManager{
-		Users:          make(map[string]models.UserRecord),
-		LifecycleStops: make(map[string]chan struct{}),
-		rebuildCh:      make(chan struct{}),
-	}
+	m := newTestManager()
 	stopCh := make(chan struct{})
 
 	go func() {
@@ -63,20 +60,52 @@ func TestWaitForSignalWakesOnBroadcastRebuild(t *testing.T) {
 	}
 }
 
-func TestShouldReuseHealthyInstance(t *testing.T) {
-	if !shouldReuseHealthyInstance(false, false, 0, "AVAILABLE", 600) {
-		t.Fatal("expected healthy available instance to be reused")
+func TestReserveLifecycleSlotsCapsActiveAccountsAtFour(t *testing.T) {
+	m := newTestManager()
+	for i := 0; i < 6; i++ {
+		userID := fmt.Sprintf("user-%d", i)
+		m.Users[userID] = models.UserRecord{UserID: userID, Status: "QUEUED"}
+		m.UserOrder = append(m.UserOrder, userID)
 	}
-	if shouldReuseHealthyInstance(false, true, 0, "AVAILABLE", 600) {
-		t.Fatal("expected stagger rotation due to force rebuild instead of reuse")
+
+	launches := m.reserveLifecycleSlots()
+	if len(launches) != maxActiveLifecycleSlots {
+		t.Fatalf("expected %d launches, got %d", maxActiveLifecycleSlots, len(launches))
 	}
-	if shouldReuseHealthyInstance(false, false, 1, "AVAILABLE", 600) {
-		t.Fatal("expected pending rebuild version to skip healthy reuse")
+	if len(m.LifecycleStops) != maxActiveLifecycleSlots {
+		t.Fatalf("expected %d active slots, got %d", maxActiveLifecycleSlots, len(m.LifecycleStops))
 	}
-	if shouldReuseHealthyInstance(true, false, 0, "AVAILABLE", 600) {
-		t.Fatal("expected bootstrap-pending instance to skip healthy reuse")
+	for i, launch := range launches {
+		want := fmt.Sprintf("user-%d", i)
+		if launch.user.UserID != want {
+			t.Fatalf("launch %d: expected %s, got %s", i, want, launch.user.UserID)
+		}
+		if got := m.Users[want].Status; got != "SCHEDULED" {
+			t.Fatalf("expected %s to be SCHEDULED, got %s", want, got)
+		}
 	}
-	if shouldReuseHealthyInstance(false, false, 0, "AVAILABLE", 180) {
-		t.Fatal("expected near-expiry instance to skip healthy reuse")
+
+	if extra := m.reserveLifecycleSlots(); len(extra) != 0 {
+		t.Fatalf("expected no extra launches while slots are full, got %d", len(extra))
+	}
+}
+
+func TestReserveLifecycleSlotsRoundRobinsAfterSlotFreed(t *testing.T) {
+	m := newTestManager()
+	for i := 0; i < 6; i++ {
+		userID := fmt.Sprintf("user-%d", i)
+		m.Users[userID] = models.UserRecord{UserID: userID, Status: "QUEUED"}
+		m.UserOrder = append(m.UserOrder, userID)
+	}
+
+	_ = m.reserveLifecycleSlots()
+	delete(m.LifecycleStops, "user-1")
+
+	launches := m.reserveLifecycleSlots()
+	if len(launches) != 1 {
+		t.Fatalf("expected one launch after freeing a slot, got %d", len(launches))
+	}
+	if got := launches[0].user.UserID; got != "user-4" {
+		t.Fatalf("expected round-robin to launch user-4, got %s", got)
 	}
 }

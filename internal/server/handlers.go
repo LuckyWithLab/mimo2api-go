@@ -152,7 +152,7 @@ func StatsHandler(c *gin.Context) {
 		"available_clients": availableClients,
 		"cooldown_clients":  activeClients - availableClients,
 		"pending_requests":  pendingCount,
-		"background_tasks":  manager.GlobalManager.GetUsersCount(),
+		"background_tasks":  manager.GlobalManager.GetActiveUsersCount(),
 		"nodes":             nodes,
 		"routes":            routes,
 		"requests": map[string]interface{}{
@@ -263,7 +263,7 @@ func ModelMappingHandler(c *gin.Context) {
 
 func RebuildHandler(c *gin.Context) {
 	manager.GlobalManager.TriggerRebuild()
-	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "重建信号已发送，所有节点将在当前循环结束后立即重建"})
+	c.JSON(http.StatusOK, gin.H{"ok": true, "message": "重排信号已发送，active slot 将在当前循环结束后重新轮询账号"})
 }
 
 func loadModelMapping() map[string]string {
