@@ -85,4 +85,5 @@ type UserRecord struct {
 	Status       string  `json:"claw_status"`
 	RemainSec    float64 `json:"remain_sec"`
 	LastRefresh  float64 `json:"lastRefresh"`
+	DailyLimitAt float64 `json:"dailyLimitAt,omitempty"` // 北京时间当日触发429限额的时间戳，0点重置后自动清零
 }

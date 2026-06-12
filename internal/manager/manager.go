@@ -32,6 +32,8 @@ var GlobalManager = &AccountManager{
 
 const maxActiveLifecycleSlots = 4
 
+var bjLoc = time.FixedZone("CST", 8*3600)
+
 type waitSignal int
 
 const (
@@ -156,6 +158,18 @@ func (m *AccountManager) reserveLifecycleSlots() []lifecycleLaunch {
 		if !ok {
 			continue
 		}
+		// 跳过今日已触发429限额的账号（北京时间0点后自动恢复）
+		if user.DailyLimitAt > 0 {
+			if user.DailyLimitAt >= beijingMidnightToday() {
+				continue
+			}
+			// 清除过期的限额标记（已过午夜）
+			user.DailyLimitAt = 0
+			if user.Status == "DAILY_LIMIT" {
+				user.Status = "QUEUED"
+			}
+			m.Users[userID] = user
+		}
 
 		stopCh := make(chan struct{})
 		m.LifecycleStops[userID] = stopCh
@@ -261,7 +275,6 @@ func isRefusalReply(reply string) bool {
 		"安全",
 		"不允许执行",
 		"不能执行",
-		"无法",
 		"拒绝",
 	}
 
@@ -271,6 +284,39 @@ func isRefusalReply(reply string) bool {
 		}
 	}
 	return false
+}
+
+// isDailyLimitError 检测创建实例时返回的 429 每日限额错误（区别于瞬时限流）
+func isDailyLimitError(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "今日创建次数已达上限")
+}
+
+// beijingMidnightToday 返回北京时间今天0点的 Unix 时间戳
+func beijingMidnightToday() float64 {
+	now := time.Now().In(bjLoc)
+	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, bjLoc)
+	return float64(midnight.Unix())
+}
+
+// markDailyLimit 标记用户今日已触发限额，并更新持久化文件
+func (m *AccountManager) markDailyLimit(userID string) {
+	m.mu.Lock()
+	u, ok := m.Users[userID]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+	u.DailyLimitAt = float64(time.Now().Unix())
+	u.Status = "DAILY_LIMIT"
+	m.Users[userID] = u
+	m.mu.Unlock()
+
+	// 锁外持久化到文件
+	os.MkdirAll("users", 0755)
+	filePath := filepath.Join("users", fmt.Sprintf("user_%s.json", userID))
+	if data, err := json.MarshalIndent(u, "", "  "); err == nil {
+		os.WriteFile(filePath, data, 0644)
+	}
 }
 
 func (m *AccountManager) updateUserRuntime(userID, status string, remainSec int) {
@@ -352,6 +398,12 @@ func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct
 			userLogf("正在创建新实例...")
 			if err := client.CreateAndWait(); err != nil {
 				client.Close()
+				// 429 每日限额：标记账号并立即释放 slot，让其他账号轮询
+				if isDailyLimitError(err) {
+					userLogf("触发每日创建限额 (429)，标记账号并释放 slot...")
+					m.markDailyLimit(user.UserID)
+					return
+				}
 				userLogf("实例创建失败: %v，等待 60s 后重试...", err)
 				signal, version := m.waitForSignal(stopCh, lastSeenRebuild, 60*time.Second)
 				if signal == waitSignalStop || signal == waitSignalRebuild {

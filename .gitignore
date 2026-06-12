@@ -12,3 +12,10 @@ target
 scripts/build-bridge.env
 logs/
 .env
+archive_*
+.vscode/
+.antigravitycli
+*.py
+__pycache__
+node_modules
+users*/
