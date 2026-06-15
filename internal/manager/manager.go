@@ -30,7 +30,8 @@ var GlobalManager = &AccountManager{
 	rebuildCh:      make(chan struct{}),
 }
 
-const maxActiveLifecycleSlots = 4
+// config.MaxActiveLifecycleSlots 从 config.MaxActiveLifecycleSlots 读取，默认 4
+// 环境变量: MIMO_MAX_ACTIVE_LIFECYCLE_SLOTS
 
 var bjLoc = time.FixedZone("CST", 8*3600)
 
@@ -138,13 +139,13 @@ func (m *AccountManager) reserveLifecycleSlots() []lifecycleLaunch {
 	if m.LifecycleStops == nil {
 		m.LifecycleStops = make(map[string]chan struct{})
 	}
-	if len(m.UserOrder) == 0 || len(m.LifecycleStops) >= maxActiveLifecycleSlots {
+	if len(m.UserOrder) == 0 || len(m.LifecycleStops) >= config.MaxActiveLifecycleSlots {
 		return nil
 	}
 
 	now := float64(time.Now().Unix())
-	launches := make([]lifecycleLaunch, 0, maxActiveLifecycleSlots-len(m.LifecycleStops))
-	for scanned := 0; len(m.LifecycleStops) < maxActiveLifecycleSlots && scanned < len(m.UserOrder); scanned++ {
+	launches := make([]lifecycleLaunch, 0, config.MaxActiveLifecycleSlots-len(m.LifecycleStops))
+	for scanned := 0; len(m.LifecycleStops) < config.MaxActiveLifecycleSlots && scanned < len(m.UserOrder); scanned++ {
 		if m.nextUserIndex >= len(m.UserOrder) {
 			m.nextUserIndex = 0
 		}
@@ -377,7 +378,7 @@ func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct
 		}
 
 		if st == "AVAILABLE" {
-			if remainSec <= 180 {
+			if remainSec <= config.SlotReleaseBufferSeconds {
 				waitTime := time.Duration(remainSec+30) * time.Second
 				if waitTime < 30*time.Second {
 					waitTime = 30 * time.Second
@@ -532,7 +533,7 @@ func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct
 		}
 		m.updateUserRuntime(user.UserID, "AVAILABLE", remainSecAfter)
 
-		waitSec := remainSecAfter - 120
+		waitSec := remainSecAfter - config.SlotReleaseBufferSeconds
 		if waitSec < 60 {
 			waitSec = 60
 		}

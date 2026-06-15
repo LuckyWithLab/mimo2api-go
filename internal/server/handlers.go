@@ -350,6 +350,44 @@ func applyModelMapping(bodyText []byte) []byte {
 	return bodyText
 }
 
+// injectSystemPrompt ensures the required system prompt is present in the messages array.
+// If the first message is a system message, it prepends the required prompt to its content.
+// Otherwise, it inserts a new system message at the beginning.
+func injectSystemPrompt(bodyText []byte) []byte {
+	if config.RequiredSystemPrompt == "" {
+		return bodyText
+	}
+	var data map[string]interface{}
+	if err := json.Unmarshal(bodyText, &data); err != nil {
+		return bodyText
+	}
+	messages, ok := data["messages"].([]interface{})
+	if !ok || len(messages) == 0 {
+		return bodyText
+	}
+	required := config.RequiredSystemPrompt
+
+	if first, ok := messages[0].(map[string]interface{}); ok {
+		if role, _ := first["role"].(string); role == "system" {
+			contentStr, _ := first["content"].(string)
+			if strings.Contains(contentStr, required) {
+				return bodyText
+			}
+			first["content"] = required + "\n\n" + contentStr
+			newBody, _ := json.Marshal(data)
+			return newBody
+		}
+	}
+
+	systemMsg := map[string]interface{}{
+		"role":    "system",
+		"content": required,
+	}
+	data["messages"] = append([]interface{}{systemMsg}, messages...)
+	newBody, _ := json.Marshal(data)
+	return newBody
+}
+
 func PutModelMappingHandler(c *gin.Context) {
 	var newMapping map[string]string
 	if err := c.ShouldBindJSON(&newMapping); err != nil {
@@ -496,6 +534,9 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 			bodyText, _ = json.Marshal(reqData)
 		}
 	}
+
+	// 注入上游必需的系统提示词（两条路径统一处理）
+	bodyText = injectSystemPrompt(bodyText)
 
 	// Record request start
 	state.Metrics.RecordRequestStarted(routeKey, isStreaming)

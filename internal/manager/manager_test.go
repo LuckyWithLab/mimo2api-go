@@ -5,10 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"mimo2api/internal/config"
 	"mimo2api/internal/models"
 )
 
 func newTestManager() *AccountManager {
+	config.MaxActiveLifecycleSlots = 4 // 测试默认值
 	return &AccountManager{
 		Users:          make(map[string]models.UserRecord),
 		LifecycleStops: make(map[string]chan struct{}),
@@ -69,11 +71,11 @@ func TestReserveLifecycleSlotsCapsActiveAccountsAtFour(t *testing.T) {
 	}
 
 	launches := m.reserveLifecycleSlots()
-	if len(launches) != maxActiveLifecycleSlots {
-		t.Fatalf("expected %d launches, got %d", maxActiveLifecycleSlots, len(launches))
+	if len(launches) != config.MaxActiveLifecycleSlots {
+		t.Fatalf("expected %d launches, got %d", config.MaxActiveLifecycleSlots, len(launches))
 	}
-	if len(m.LifecycleStops) != maxActiveLifecycleSlots {
-		t.Fatalf("expected %d active slots, got %d", maxActiveLifecycleSlots, len(m.LifecycleStops))
+	if len(m.LifecycleStops) != config.MaxActiveLifecycleSlots {
+		t.Fatalf("expected %d active slots, got %d", config.MaxActiveLifecycleSlots, len(m.LifecycleStops))
 	}
 	for i, launch := range launches {
 		want := fmt.Sprintf("user-%d", i)
