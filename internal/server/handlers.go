@@ -30,9 +30,7 @@ import (
 const statusClientClosed = 499
 
 const (
-	nodeFailureCooldown = 30 * time.Second
-	nodeTimeoutCooldown = 120 * time.Second
-	maxNodeAttempts     = 2
+	maxNodeAttempts = 2
 )
 
 const compactSystemPrompt = `You are a conversation compaction assistant. Your task is to produce a compacted summary of the following conversation. The summary must preserve all key information including:
@@ -550,6 +548,8 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 	// Record request start
 	state.Metrics.RecordRequestStarted(routeKey, isStreaming)
 
+	nodeFailureCooldown := time.Duration(maxInt(config.NodeFailureCooldown, 0)) * time.Second
+	nodeTimeoutCooldown := time.Duration(maxInt(config.NodeTimeoutCooldown, 0)) * time.Second
 	node401Cooldown := time.Duration(maxInt(config.Node401Cooldown, 1)) * time.Second
 	excludedNodes := make(map[*websocket.Conn]struct{}, maxNodeAttempts)
 	responseCommitted := false // 跨 attempt 持久化：是否已向客户端写过任何字节

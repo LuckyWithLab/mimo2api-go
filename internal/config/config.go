@@ -38,14 +38,16 @@ var (
 
 	MaxPendingPerClient      int
 	NodeResponseIdleTimeout  int
+	NodeFailureCooldown      int = 30
+	NodeTimeoutCooldown      int = 120
 	Node401Cooldown          int
 	KeepAliveIntervalSeconds int
 	MetricsDBPath            string
 	MetricsRetentionDays     int
-	MetricsBucketSeconds        int
-	MaxActiveLifecycleSlots     int
-	SlotReleaseBufferSeconds    int
-	AistudioConnectIPs          []string
+	MetricsBucketSeconds     int
+	MaxActiveLifecycleSlots  int
+	SlotReleaseBufferSeconds int
+	AistudioConnectIPs       []string
 	AistudioHost             = "aistudio.xiaomimimo.com"
 	AistudioBaseURL          = "https://aistudio.xiaomimimo.com"
 	AistudioWSURL            = "wss://aistudio.xiaomimimo.com/ws/proxy"
@@ -106,6 +108,14 @@ func Load() {
 		"MIMO_NODE_RESPONSE_IDLE_TIMEOUT",
 		"MIMO_BRIDGE_IDLE_TIMEOUT",
 	}, 90)
+	NodeFailureCooldown = getEnvAsInt("MIMO_NODE_FAILURE_COOLDOWN_SECONDS", 30)
+	if NodeFailureCooldown < 0 {
+		NodeFailureCooldown = 0
+	}
+	NodeTimeoutCooldown = getEnvAsInt("MIMO_NODE_TIMEOUT_COOLDOWN_SECONDS", 120)
+	if NodeTimeoutCooldown < 0 {
+		NodeTimeoutCooldown = 0
+	}
 	Node401Cooldown = getEnvAsInt("MIMO_NODE_401_COOLDOWN_SECONDS", 3600)
 	KeepAliveIntervalSeconds = getEnvAsInt("MIMO_KEEPALIVE_INTERVAL", 50)
 	if KeepAliveIntervalSeconds < 5 {
