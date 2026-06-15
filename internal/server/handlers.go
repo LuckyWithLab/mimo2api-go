@@ -351,10 +351,9 @@ func applyModelMapping(bodyText []byte) []byte {
 }
 
 // injectSystemPrompt ensures the required system prompt is present in the messages array.
-// If the first message is a system message, it prepends the required prompt to its content.
-// Otherwise, it inserts a new system message at the beginning.
-func injectSystemPrompt(bodyText []byte) []byte {
-	if config.RequiredSystemPrompt == "" {
+// Only applies to the specified model. Handles both string and array content types.
+func injectSystemPrompt(bodyText []byte, model string) []byte {
+	if config.RequiredSystemPrompt == "" || model != "mimo-v2.5-pro" {
 		return bodyText
 	}
 	var data map[string]interface{}
@@ -367,18 +366,28 @@ func injectSystemPrompt(bodyText []byte) []byte {
 	}
 	required := config.RequiredSystemPrompt
 
+	// content 为字符串时直接前置拼接
 	if first, ok := messages[0].(map[string]interface{}); ok {
 		if role, _ := first["role"].(string); role == "system" {
-			contentStr, _ := first["content"].(string)
-			if strings.Contains(contentStr, required) {
-				return bodyText
+			switch content := first["content"].(type) {
+			case string:
+				if strings.Contains(content, required) {
+					return bodyText
+				}
+				first["content"] = required + "\n\n" + content
+				newBody, _ := json.Marshal(data)
+				return newBody
+			case []interface{}:
+				// 数组类型（多模态），插入 text part 到最前面
+				textPart := map[string]interface{}{"type": "text", "text": required}
+				first["content"] = append([]interface{}{textPart}, content...)
+				newBody, _ := json.Marshal(data)
+				return newBody
 			}
-			first["content"] = required + "\n\n" + contentStr
-			newBody, _ := json.Marshal(data)
-			return newBody
 		}
 	}
 
+	// 没有 system 消息或 content 类型异常，插入新的 system 消息
 	systemMsg := map[string]interface{}{
 		"role":    "system",
 		"content": required,
@@ -536,7 +545,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 	}
 
 	// 注入上游必需的系统提示词（两条路径统一处理）
-	bodyText = injectSystemPrompt(bodyText)
+	bodyText = injectSystemPrompt(bodyText, modelName)
 
 	// Record request start
 	state.Metrics.RecordRequestStarted(routeKey, isStreaming)
