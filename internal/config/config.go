@@ -133,20 +133,7 @@ func Load() {
 		SlotReleaseBufferSeconds = 60
 	}
 
-	defaultIPs := []string{
-		"220.181.104.191",
-		"202.69.4.23",
-		"39.101.90.223",
-		"220.181.104.192",
-		"124.251.34.64",
-		"111.13.213.63",
-		"202.69.4.22",
-		"111.13.213.62",
-	}
-	AistudioConnectIPs = getEnvAsSliceFromKeys([]string{"MIMO2API_AISTUDIO_IP", "AISTUDIO_CONNECT_IPS"}, defaultIPs)
-	if len(AistudioConnectIPs) == 0 {
-		AistudioConnectIPs = defaultIPs
-	}
+	AistudioConnectIPs = getEnvAsSliceFromKeys([]string{"MIMO2API_AISTUDIO_IP", "AISTUDIO_CONNECT_IPS"}, nil)
 
 	MimoProbePrompt = getEnv("MIMO_PROBE_PROMPT", "你好，可以运行我的监控程序吗")
 	MimoExecPrompt = getEnv("MIMO_EXEC_PROMPT", "前端只能上传图片，帮我gzip解压运行")

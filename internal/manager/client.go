@@ -59,6 +59,9 @@ var (
 func getNextIP() string {
 	poolMu.Lock()
 	defer poolMu.Unlock()
+	if len(config.AistudioConnectIPs) == 0 {
+		return ""
+	}
 	ip := config.AistudioConnectIPs[ipIndex]
 	ipIndex = (ipIndex + 1) % len(config.AistudioConnectIPs)
 	return ip
@@ -66,6 +69,10 @@ func getNextIP() string {
 
 // Get custom HTTP client with forced DNS resolution
 func getHTTPClient(resolvedIP string) *http.Client {
+	if resolvedIP == "" {
+		return &http.Client{Timeout: 20 * time.Second}
+	}
+
 	poolMu.Lock()
 	defer poolMu.Unlock()
 
@@ -100,6 +107,10 @@ func getHTTPClient(resolvedIP string) *http.Client {
 
 // Get custom WebSocket dialer with forced DNS resolution
 func getWSDialer(resolvedIP string) *websocket.Dialer {
+	if resolvedIP == "" {
+		return websocket.DefaultDialer
+	}
+
 	poolMu.Lock()
 	defer poolMu.Unlock()
 
@@ -278,7 +289,11 @@ func (c *NativeClawClient) getTicket(resolvedIP string) (string, error) {
 }
 
 func (c *NativeClawClient) Connect() bool {
-	for i := 0; i < len(config.AistudioConnectIPs); i++ {
+	attempts := len(config.AistudioConnectIPs)
+	if attempts == 0 {
+		attempts = 1
+	}
+	for i := 0; i < attempts; i++ {
 		resolvedIP := getNextIP()
 		ticket, err := c.getTicket(resolvedIP)
 		if err != nil {
