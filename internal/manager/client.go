@@ -714,7 +714,7 @@ func (c *NativeClawClient) SendFileMessage(fileInfo map[string]interface{}, prom
 	return c.SendChatAndWaitReply(msgText, 180*time.Second, &deliver)
 }
 
-func (c *NativeClawClient) GetInstanceStatus() (status string, remainSec int, err error) {
+func (c *NativeClawClient) GetInstanceStatus() (status string, remainSec int, message string, err error) {
 	path := "/open-apis/user/mimo-claw/status"
 	attempts := len(config.AistudioConnectIPs)
 	if attempts == 0 {
@@ -760,6 +760,9 @@ func (c *NativeClawClient) GetInstanceStatus() (status string, remainSec int, er
 				if st, ok := d["status"].(string); ok {
 					status = st
 				}
+				if msg, ok := d["message"].(string); ok {
+					message = msg
+				}
 				if expireTimeRaw, ok := d["expireTime"].(float64); ok {
 					expireTime := int64(expireTimeRaw)
 					remainSec = int(expireTime/1000 - time.Now().Unix())
@@ -775,14 +778,14 @@ func (c *NativeClawClient) GetInstanceStatus() (status string, remainSec int, er
 		}()
 
 		if lastErr == nil {
-			return status, remainSec, nil
+			return status, remainSec, message, nil
 		}
 	}
 
 	if lastErr == nil {
 		lastErr = fmt.Errorf("status unavailable")
 	}
-	return "", 0, lastErr
+	return "", 0, "", lastErr
 }
 
 func (c *NativeClawClient) DestroyClaw() bool {
@@ -840,7 +843,7 @@ func (c *NativeClawClient) CreateAndWait() error {
 	lastStatus := ""
 	var lastErr error
 	for time.Now().Before(deadline) {
-		st, _, err := c.GetInstanceStatus()
+		st, _, msg, err := c.GetInstanceStatus()
 		if err != nil {
 			lastErr = err
 			time.Sleep(2 * time.Second)
@@ -851,6 +854,9 @@ func (c *NativeClawClient) CreateAndWait() error {
 			return nil
 		}
 		if st == "DESTROYED" || st == "CREATE_FAILED" || st == "EXPIRED(401)" {
+			if msg != "" {
+				return fmt.Errorf("instance entered terminal state %q while waiting for availability: %s", st, msg)
+			}
 			return fmt.Errorf("instance entered terminal state %q while waiting for availability", st)
 		}
 		time.Sleep(2 * time.Second)

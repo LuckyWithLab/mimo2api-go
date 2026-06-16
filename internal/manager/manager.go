@@ -357,7 +357,7 @@ func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct
 		userLogf("--- 占用调度 slot，检查实例状态 ---")
 		client := NewNativeClawClient(user)
 
-		st, remainSec, err := client.GetInstanceStatus()
+		st, remainSec, _, err := client.GetInstanceStatus()
 		if err != nil {
 			userLogf("获取实例状态失败: %v", err)
 			signal, _ := m.waitForSignal(stopCh, lastSeenRebuild, 30*time.Second)
@@ -526,7 +526,7 @@ func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct
 			return
 		}
 
-		_, remainSecAfter, err := client.GetInstanceStatus()
+		_, remainSecAfter, _, err := client.GetInstanceStatus()
 		if err != nil {
 			userLogf("部署后刷新实例状态失败: %v，10m 后重试检查...", err)
 			client.Close()
