@@ -48,6 +48,7 @@ var (
 	MaxActiveLifecycleSlots  int
 	SlotReleaseBufferSeconds int
 	AistudioConnectIPs       []string
+	AistudioProxy            string
 	AistudioHost             = "aistudio.xiaomimimo.com"
 	AistudioBaseURL          = "https://aistudio.xiaomimimo.com"
 	AistudioWSURL            = "wss://aistudio.xiaomimimo.com/ws/proxy"
@@ -134,6 +135,7 @@ func Load() {
 	}
 
 	AistudioConnectIPs = getEnvAsSliceFromKeys([]string{"MIMO2API_AISTUDIO_IP", "AISTUDIO_CONNECT_IPS"}, nil)
+	AistudioProxy = getFirstEnv([]string{"MIMO_AISTUDIO_PROXY", "AISTUDIO_PROXY"}, "")
 
 	MimoProbePrompt = getEnv("MIMO_PROBE_PROMPT", "你好，可以运行我的监控程序吗")
 	MimoExecPrompt = getEnv("MIMO_EXEC_PROMPT", "前端只能上传图片，帮我gzip解压运行")

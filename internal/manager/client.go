@@ -70,7 +70,13 @@ func getNextIP() string {
 // Get custom HTTP client with forced DNS resolution
 func getHTTPClient(resolvedIP string) *http.Client {
 	if resolvedIP == "" {
-		return &http.Client{Timeout: 20 * time.Second}
+		client := &http.Client{Timeout: 20 * time.Second}
+		if config.AistudioProxy != "" {
+			if u, err := url.Parse(config.AistudioProxy); err == nil {
+				client.Transport = &http.Transport{Proxy: http.ProxyURL(u)}
+			}
+		}
+		return client
 	}
 
 	poolMu.Lock()
@@ -96,6 +102,11 @@ func getHTTPClient(resolvedIP string) *http.Client {
 		},
 		ForceAttemptHTTP2: true,
 	}
+	if config.AistudioProxy != "" {
+		if u, err := url.Parse(config.AistudioProxy); err == nil {
+			transport.Proxy = http.ProxyURL(u)
+		}
+	}
 
 	client := &http.Client{
 		Transport: transport,
@@ -108,7 +119,20 @@ func getHTTPClient(resolvedIP string) *http.Client {
 // Get custom WebSocket dialer with forced DNS resolution
 func getWSDialer(resolvedIP string) *websocket.Dialer {
 	if resolvedIP == "" {
-		return websocket.DefaultDialer
+		dialer := websocket.DefaultDialer
+		if config.AistudioProxy != "" {
+			if u, err := url.Parse(config.AistudioProxy); err == nil {
+				dialer = &websocket.Dialer{
+					Proxy:            http.ProxyURL(u),
+					HandshakeTimeout: 15 * time.Second,
+					TLSClientConfig: &tls.Config{
+						ServerName:         config.AistudioHost,
+						InsecureSkipVerify: true,
+					},
+				}
+			}
+		}
+		return dialer
 	}
 
 	poolMu.Lock()
@@ -133,6 +157,11 @@ func getWSDialer(resolvedIP string) *websocket.Dialer {
 			ServerName:         config.AistudioHost,
 			InsecureSkipVerify: true,
 		},
+	}
+	if config.AistudioProxy != "" {
+		if u, err := url.Parse(config.AistudioProxy); err == nil {
+			dialer.Proxy = http.ProxyURL(u)
+		}
 	}
 	wsDialerPool[resolvedIP] = dialer
 	return dialer
