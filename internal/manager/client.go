@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"golang.org/x/net/proxy"
 
 	"mimo2api/internal/config"
 	"mimo2api/internal/models"
@@ -67,14 +68,58 @@ func getNextIP() string {
 	return ip
 }
 
+// parseAistudioProxy 解析代理配置，返回 (httpProxyFunc, socksDialContext)
+// httpProxyFunc 用于 http.Transport.Proxy / websocket.Dialer.Proxy
+// socksDialContext 用于替换 DialContext（SOCKS5 代理时生效，且忽略 resolvedIP）
+func parseAistudioProxy() (func(*http.Request) (*url.URL, error), func(context.Context, string, string) (net.Conn, error)) {
+	if config.AistudioProxy == "" {
+		return nil, nil
+	}
+	u, err := url.Parse(config.AistudioProxy)
+	if err != nil {
+		return nil, nil
+	}
+	if u.Scheme == "socks5" {
+		d, err := proxy.FromURL(u, proxy.Direct)
+		if err != nil {
+			return nil, nil
+		}
+		if ctxDialer, ok := d.(interface {
+			DialContext(ctx context.Context, network, addr string) (net.Conn, error)
+		}); ok {
+			return nil, ctxDialer.DialContext
+		}
+		return nil, func(ctx context.Context, network, addr string) (net.Conn, error) {
+			return d.Dial(network, addr)
+		}
+	}
+	return http.ProxyURL(u), nil
+}
+
 // Get custom HTTP client with forced DNS resolution
 func getHTTPClient(resolvedIP string) *http.Client {
+	httpProxy, socksDial := parseAistudioProxy()
+
+	// SOCKS5 代理自己处理 DNS，忽略 resolvedIP，不使用 pool
+	if socksDial != nil {
+		return &http.Client{
+			Transport: &http.Transport{
+				DialContext: socksDial,
+				TLSClientConfig: &tls.Config{
+					ServerName:         config.AistudioHost,
+					InsecureSkipVerify: true,
+				},
+				ForceAttemptHTTP2: true,
+			},
+			Timeout: 20 * time.Second,
+		}
+	}
+
+	// 无强制 IP：正常 DNS，可配 HTTP 代理
 	if resolvedIP == "" {
 		client := &http.Client{Timeout: 20 * time.Second}
-		if config.AistudioProxy != "" {
-			if u, err := url.Parse(config.AistudioProxy); err == nil {
-				client.Transport = &http.Transport{Proxy: http.ProxyURL(u)}
-			}
+		if httpProxy != nil {
+			client.Transport = &http.Transport{Proxy: httpProxy}
 		}
 		return client
 	}
@@ -102,10 +147,8 @@ func getHTTPClient(resolvedIP string) *http.Client {
 		},
 		ForceAttemptHTTP2: true,
 	}
-	if config.AistudioProxy != "" {
-		if u, err := url.Parse(config.AistudioProxy); err == nil {
-			transport.Proxy = http.ProxyURL(u)
-		}
+	if httpProxy != nil {
+		transport.Proxy = httpProxy
 	}
 
 	client := &http.Client{
@@ -118,18 +161,31 @@ func getHTTPClient(resolvedIP string) *http.Client {
 
 // Get custom WebSocket dialer with forced DNS resolution
 func getWSDialer(resolvedIP string) *websocket.Dialer {
+	httpProxy, socksDial := parseAistudioProxy()
+
+	// SOCKS5 代理自己处理 DNS，忽略 resolvedIP，不使用 pool
+	if socksDial != nil {
+		return &websocket.Dialer{
+			NetDialContext:   socksDial,
+			HandshakeTimeout: 15 * time.Second,
+			TLSClientConfig: &tls.Config{
+				ServerName:         config.AistudioHost,
+				InsecureSkipVerify: true,
+			},
+		}
+	}
+
+	// 无强制 IP：正常 DNS，可配 HTTP 代理
 	if resolvedIP == "" {
 		dialer := websocket.DefaultDialer
-		if config.AistudioProxy != "" {
-			if u, err := url.Parse(config.AistudioProxy); err == nil {
-				dialer = &websocket.Dialer{
-					Proxy:            http.ProxyURL(u),
-					HandshakeTimeout: 15 * time.Second,
-					TLSClientConfig: &tls.Config{
-						ServerName:         config.AistudioHost,
-						InsecureSkipVerify: true,
-					},
-				}
+		if httpProxy != nil {
+			dialer = &websocket.Dialer{
+				Proxy:            httpProxy,
+				HandshakeTimeout: 15 * time.Second,
+				TLSClientConfig: &tls.Config{
+					ServerName:         config.AistudioHost,
+					InsecureSkipVerify: true,
+				},
 			}
 		}
 		return dialer
@@ -158,10 +214,8 @@ func getWSDialer(resolvedIP string) *websocket.Dialer {
 			InsecureSkipVerify: true,
 		},
 	}
-	if config.AistudioProxy != "" {
-		if u, err := url.Parse(config.AistudioProxy); err == nil {
-			dialer.Proxy = http.ProxyURL(u)
-		}
+	if httpProxy != nil {
+		dialer.Proxy = httpProxy
 	}
 	wsDialerPool[resolvedIP] = dialer
 	return dialer
