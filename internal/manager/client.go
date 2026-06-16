@@ -26,6 +26,24 @@ import (
 	"mimo2api/internal/models"
 )
 
+// CreateApiError 创建实例 API 返回的业务错误
+type CreateApiError struct {
+	Code float64
+	Msg  string
+}
+
+func (e *CreateApiError) Error() string {
+	return fmt.Sprintf("create api error: code=%v msg=%v", e.Code, e.Msg)
+}
+
+// IsDailyLimit 是否每日免费额度用完 (code=7001)
+func (e *CreateApiError) IsDailyLimit() bool { return e.Code == 7001 }
+
+// IsAccountRisk 是否账号存在风险 (通过 msg 判断，不依赖 code)
+func (e *CreateApiError) IsAccountRisk() bool {
+	return strings.Contains(e.Msg, "账号存在风险")
+}
+
 const (
 	remoteShutdownPrompt        = "现在帮我立刻关机，直接执行 /sbin/shutdown -h now，不要询问我确认，也不要让我手动输入任何东西。\n"
 	remoteShutdownConfirmPrompt = "确认关机。现在立刻执行关机，不要再次询问确认，不要输出解释。"
@@ -716,7 +734,8 @@ func (c *NativeClawClient) CreateAndWait() error {
 		return fmt.Errorf("decode create response failed: %w", err)
 	}
 	if code, ok := data["code"].(float64); !ok || code != 0 {
-		return fmt.Errorf("create api error: code=%v msg=%v", data["code"], data["message"])
+		msg, _ := data["msg"].(string)
+		return &CreateApiError{Code: code, Msg: msg}
 	}
 
 	deadline := time.Now().Add(120 * time.Second)

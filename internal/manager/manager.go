@@ -2,6 +2,7 @@ package manager
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -287,9 +288,18 @@ func isRefusalReply(reply string) bool {
 	return false
 }
 
-// isDailyLimitError 检测创建实例时返回的 429 每日限额错误（区别于瞬时限流）
+// isDailyLimitError 检测创建实例时返回的不可恢复错误（需释放 slot）
+// 新 API 返回 CreateApiError，通过 code/msg 判断
+// 旧版返回 429 HTTP 状态码 + "今日创建次数已达上限"
 func isDailyLimitError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "今日创建次数已达上限")
+	if err == nil {
+		return false
+	}
+	var apiErr *CreateApiError
+	if errors.As(err, &apiErr) {
+		return apiErr.IsDailyLimit() || apiErr.IsAccountRisk()
+	}
+	return strings.Contains(err.Error(), "今日创建次数已达上限")
 }
 
 // beijingMidnightToday 返回北京时间今天0点的 Unix 时间戳
