@@ -289,8 +289,7 @@ func isRefusalReply(reply string) bool {
 }
 
 // isDailyLimitError 检测创建实例时返回的不可恢复错误（需释放 slot）
-// 新 API 返回 CreateApiError，通过 code/msg 判断
-// 旧版返回 429 HTTP 状态码 + "今日创建次数已达上限"
+// 仅通过 CreateApiError 的 code/msg 判断，不把 HTTP 429 当作每日限额
 func isDailyLimitError(err error) bool {
 	if err == nil {
 		return false
@@ -299,7 +298,7 @@ func isDailyLimitError(err error) bool {
 	if errors.As(err, &apiErr) {
 		return apiErr.IsDailyLimit() || apiErr.IsAccountRisk()
 	}
-	return strings.Contains(err.Error(), "今日创建次数已达上限")
+	return false
 }
 
 // beijingMidnightToday 返回北京时间今天0点的 Unix 时间戳
@@ -409,9 +408,9 @@ func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct
 			userLogf("正在创建新实例...")
 			if err := client.CreateAndWait(); err != nil {
 				client.Close()
-				// 429 每日限额：标记账号并立即释放 slot，让其他账号轮询
+				// 不可恢复的创建错误（额度用完/账号风险）：标记账号并释放 slot
 				if isDailyLimitError(err) {
-					userLogf("触发每日创建限额 (429)，标记账号并释放 slot...")
+					userLogf("不可恢复创建错误: %v，标记账号并释放 slot", err)
 					m.markDailyLimit(user.UserID)
 					return
 				}
