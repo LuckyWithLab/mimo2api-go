@@ -31,12 +31,8 @@ var Models = []ModelDef{
 	{"mimo-v2.5-pro", "MiMo V2.5 Pro", 1048576, 131072},
 	{"mimo-v2.5", "MiMo V2.5", 1048576, 131072},
 	{"mimo-v2.5-tts", "MiMo V2.5 TTS", 8192, 8192},
-	{"mimo-v2-pro", "MiMo V2 Pro", 1048576, 131072},
-	{"mimo-v2-flash", "MiMo V2 Flash", 256000, 131072},
-	{"mimo-v2-omni", "MiMo V2 Omni", 256000, 131072},
 	{"mimo-v2.5-tts-voicedesign", "MiMo V2.5 TTS VoiceDesign", 8192, 8192},
 	{"mimo-v2.5-tts-voiceclone", "MiMo V2.5 TTS VoiceClone", 8192, 8192},
-	{"mimo-v2-tts", "MiMo V2 TTS", 8192, 8192},
 	{"mimo-v2.5-pro-ultraspeed", "MiMo V2.5 Pro UltraSpeed", 1048576, 131072},
 }
 

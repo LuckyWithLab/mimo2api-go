@@ -336,7 +336,19 @@ func (c *NativeClawClient) doAistudioReq(method, path string, body []byte, timeo
 		return nil, err
 	}
 	req.Header.Set("Cookie", c.Cookies)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
+	req.Header.Set("Origin", "https://aistudio.xiaomimimo.com")
+	req.Header.Set("Referer", "https://aistudio.xiaomimimo.com/")
+	req.Header.Set("x-timezone", "Asia/Shanghai")
+	req.Header.Set("accept", "*/*")
+	req.Header.Set("accept-language", "system")
+	req.Header.Set("priority", "u=1, i")
+	req.Header.Set("sec-ch-ua", `"Chromium";v="146", "Not-A.Brand";v="24", "Google Chrome";v="146"`)
+	req.Header.Set("sec-ch-ua-mobile", "?0")
+	req.Header.Set("sec-ch-ua-platform", `"Windows"`)
+	req.Header.Set("sec-fetch-dest", "empty")
+	req.Header.Set("sec-fetch-mode", "cors")
+	req.Header.Set("sec-fetch-site", "same-origin")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -470,8 +482,8 @@ func (c *NativeClawClient) readLoop(conn *websocket.Conn) {
 		c.mu.Lock()
 		if msg.Type == "event" && msg.Event == "connect.challenge" {
 			params := map[string]interface{}{
-				"minProtocol": 3,
-				"maxProtocol": 3,
+				"minProtocol": 4,
+				"maxProtocol": 4,
 				"client": map[string]string{
 					"id":       "cli",
 					"version":  "mimo-claw-ui",

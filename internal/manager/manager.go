@@ -16,13 +16,14 @@ import (
 )
 
 type AccountManager struct {
-	Users          map[string]models.UserRecord
-	LifecycleStops map[string]chan struct{}
-	rebuildCh      chan struct{}
-	rebuildVersion uint64
-	mu             sync.RWMutex
-	UserOrder      []string // ordered user IDs for round-robin scheduling
-	nextUserIndex  int
+	Users            map[string]models.UserRecord
+	LifecycleStops   map[string]chan struct{}
+	rebuildCh        chan struct{}
+	rebuildVersion   uint64
+	mu               sync.RWMutex
+	UserOrder        []string // ordered user IDs for round-robin scheduling
+	nextUserIndex    int
+	GlobalPauseUntil float64 // 非零时，暂停所有账号创建直到该 Unix 时间戳（用于账号风险全局暂停）
 }
 
 var GlobalManager = &AccountManager{
@@ -140,6 +141,16 @@ func (m *AccountManager) reserveLifecycleSlots() []lifecycleLaunch {
 	if m.LifecycleStops == nil {
 		m.LifecycleStops = make(map[string]chan struct{})
 	}
+
+	// 全局暂停：检测到账号风险时，暂停所有创建 24 小时
+	if m.GlobalPauseUntil > 0 && float64(time.Now().Unix()) < m.GlobalPauseUntil {
+		return nil
+	}
+	// 自动清除已过期的全局暂停
+	if m.GlobalPauseUntil > 0 && float64(time.Now().Unix()) >= m.GlobalPauseUntil {
+		m.GlobalPauseUntil = 0
+	}
+
 	if len(m.UserOrder) == 0 || len(m.LifecycleStops) >= config.MaxActiveLifecycleSlots {
 		return nil
 	}
@@ -288,15 +299,15 @@ func isRefusalReply(reply string) bool {
 	return false
 }
 
-// isDailyLimitError 检测创建实例时返回的不可恢复错误（需释放 slot）
+// IsDailyLimitError 检测创建实例时返回的不可恢复错误（需释放 slot）
 // 仅通过 CreateApiError 的 code/msg 判断，不把 HTTP 429 当作每日限额
-func isDailyLimitError(err error) bool {
+func IsDailyLimitError(err error) bool {
 	if err == nil {
 		return false
 	}
 	var apiErr *CreateApiError
 	if errors.As(err, &apiErr) {
-		return apiErr.IsDailyLimit() || apiErr.IsAccountRisk()
+		return apiErr.IsDailyLimit()
 	}
 	return false
 }
@@ -306,6 +317,15 @@ func beijingMidnightToday() float64 {
 	now := time.Now().In(bjLoc)
 	midnight := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, bjLoc)
 	return float64(midnight.Unix())
+}
+
+// markGlobalAccountRisk 全局暂停所有账号创建 24 小时（账号风险）
+func (m *AccountManager) markGlobalAccountRisk() {
+	m.mu.Lock()
+	m.GlobalPauseUntil = float64(time.Now().Add(24 * time.Hour).Unix())
+	pauseUntil := time.Unix(int64(m.GlobalPauseUntil), 0).In(bjLoc)
+	m.mu.Unlock()
+	managerLogf("检测到账号存在风险，全局暂停所有账号创建，暂停至 %s（北京时间）", pauseUntil.Format("2006-01-02 15:04:05"))
 }
 
 // markDailyLimit 标记用户今日已触发限额，并更新持久化文件
@@ -408,9 +428,16 @@ func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct
 			userLogf("正在创建新实例...")
 			if err := client.CreateAndWait(); err != nil {
 				client.Close()
-				// 不可恢复的创建错误（额度用完/账号风险）：标记账号并释放 slot
-				if isDailyLimitError(err) {
-					userLogf("不可恢复创建错误: %v，标记账号并释放 slot", err)
+				// 账号存在风险：全局暂停所有账号创建 24 小时
+				var apiErr *CreateApiError
+				if errors.As(err, &apiErr) && apiErr.IsAccountRisk() {
+					userLogf("账号存在风险: %v，全局暂停所有创建 24 小时", err)
+					m.markGlobalAccountRisk()
+					return
+				}
+				// 每日免费额度用完：仅标记该账号今日限额，释放 slot
+				if IsDailyLimitError(err) {
+					userLogf("每日额度用完: %v，标记账号并释放 slot", err)
 					m.markDailyLimit(user.UserID)
 					return
 				}
@@ -511,11 +538,17 @@ func (m *AccountManager) runLifecycle(user models.UserRecord, stopCh chan struct
 			continue
 		} else {
 			userLogf("deployment complete. AI reply: %s", reply)
-			// 检测AI是否拒绝执行，如果拒绝说明文件注入没有成功，释放 slot 给下一个账号。
+			// 检测AI是否拒绝执行，如果拒绝发送 /new 重置会话后重试部署流程。
 			if isRefusalReply(reply) {
-				userLogf("检测到AI拒绝执行，文件注入可能未成功；不主动销毁，释放当前 slot...")
-				client.Close()
-				return
+				userLogf("检测到AI拒绝执行，发送 /new 重置会话后重试...")
+				_, err := client.SendChatAndWaitReply("/new", 30*time.Second, nil)
+				if err != nil {
+					userLogf("/new 重置失败: %v，释放 slot...", err)
+					client.Close()
+					return
+				}
+				userLogf("/new 重置成功，重新开始部署流程...")
+				continue
 			}
 		}
 
