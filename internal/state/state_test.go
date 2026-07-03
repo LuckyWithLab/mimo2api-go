@@ -241,6 +241,64 @@ func TestGetNextClientExcludingSkipsProvidedNode(t *testing.T) {
 	}
 }
 
+func TestGetNextProxyClientMatchingHostSelectsExactProxyNode(t *testing.T) {
+	resetClientStateForTest()
+
+	ws1 := &websocket.Conn{}
+	ws2 := &websocket.Conn{}
+
+	RegisterClient(ws1, "edge-a")
+	RegisterClientWithRole(ws2, "edge-b", NodeRoleProxy)
+
+	client := GetNextProxyClientMatchingHost("edge-b", "")
+	if client == nil {
+		t.Fatal("expected an available client")
+	}
+	if client.Conn != ws2 {
+		t.Fatalf("expected edge-b, got %s", client.Host)
+	}
+}
+
+func TestGetNextProxyClientMatchingHostSelectsPrefixGroup(t *testing.T) {
+	resetClientStateForTest()
+
+	ws1 := &websocket.Conn{}
+	ws2 := &websocket.Conn{}
+
+	RegisterClient(ws1, "mimo-a")
+	RegisterClientWithRole(ws2, "proxy-a", NodeRoleProxy)
+
+	client := GetNextProxyClientMatchingHost("", "proxy-")
+	if client == nil {
+		t.Fatal("expected an available client")
+	}
+	if client.Conn != ws2 {
+		t.Fatalf("expected proxy-a, got %s", client.Host)
+	}
+}
+
+func TestProxyRoleIsNotSelectedForMimoCore(t *testing.T) {
+	resetClientStateForTest()
+
+	ws := &websocket.Conn{}
+	RegisterClientWithRole(ws, "proxy-only", NodeRoleProxy)
+
+	if client := GetNextClient(); client != nil {
+		t.Fatalf("expected proxy-only node to be excluded from mimo core pool, got %s", client.Host)
+	}
+}
+
+func TestMimoRoleIsNotSelectedForProxy(t *testing.T) {
+	resetClientStateForTest()
+
+	ws := &websocket.Conn{}
+	RegisterClient(ws, "mimo-only")
+
+	if client := GetNextProxyClientMatchingHost("", ""); client != nil {
+		t.Fatalf("expected mimo-only node to be excluded from proxy pool, got %s", client.Host)
+	}
+}
+
 func TestPushResponseClosedChannelDoesNotPanic(t *testing.T) {
 	resetClientStateForTest()
 

@@ -497,9 +497,14 @@ func URLProxyHandler(c *gin.Context) {
 		return
 	}
 
-	targetWS := state.GetNextClientExcluding(nil)
+	nodeSelector := strings.TrimSpace(c.Query("node"))
+	if nodeSelector == "" {
+		nodeSelector = strings.TrimSpace(c.Query("node_label"))
+	}
+	nodePrefix := strings.TrimSpace(c.Query("node_prefix"))
+	targetWS := state.GetNextProxyClientMatchingHost(nodeSelector, nodePrefix)
 	if targetWS == nil {
-		log.Printf("[ERR] req=%s node=nil route=%s status=503 dur=%dms reason=no_available_node", reqID, routeKey, time.Since(startTime).Milliseconds())
+		log.Printf("[ERR] req=%s node=nil route=%s selector=%s status=503 dur=%dms reason=no_available_node", reqID, routeKey, proxyNodeSelectorLabel(nodeSelector, nodePrefix), time.Since(startTime).Milliseconds())
 		writeErrorResponse(c, http.StatusServiceUnavailable, "Gateway Error: 没有可用的内网节点")
 		return
 	}
@@ -1478,6 +1483,17 @@ func AnthropicModelsHandler(c *gin.Context) {
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
+	Error: func(w http.ResponseWriter, r *http.Request, status int, reason error) {
+		log.Printf("[ERR] reason=ws_upgrade_rejected remote=%s status=%d err=%v connection=%q upgrade=%q proto=%s",
+			r.RemoteAddr,
+			status,
+			reason,
+			r.Header.Get("Connection"),
+			r.Header.Get("Upgrade"),
+			r.Proto,
+		)
+		http.Error(w, reason.Error(), status)
+	},
 }
 
 func WSTunnelHandler(c *gin.Context) {
@@ -1501,12 +1517,17 @@ func WSTunnelHandler(c *gin.Context) {
 
 	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		log.Printf("[ERR] reason=ws_upgrade_failed remote=%s err=%v", c.ClientIP(), err)
 		return
 	}
 
 	remoteIP := c.ClientIP()
 	nodeID := strings.TrimSpace(c.Query("node_id"))
 	nodeLabel := strings.TrimSpace(c.Query("node_label"))
+	nodeRole := strings.TrimSpace(c.Query("node_role"))
+	if nodeRole == "" {
+		nodeRole = strings.TrimSpace(c.Query("role"))
+	}
 	hostLabel := remoteIP
 	if nodeLabel != "" {
 		hostLabel = nodeLabel
@@ -1514,7 +1535,7 @@ func WSTunnelHandler(c *gin.Context) {
 		hostLabel = nodeID + "@" + remoteIP
 	}
 
-	state.RegisterClient(ws, hostLabel)
+	state.RegisterClientWithRole(ws, hostLabel, nodeRole)
 	defer func() {
 		state.UnregisterClient(ws)
 		ws.Close()
@@ -1579,6 +1600,16 @@ func proxyRequestHeaders(headers http.Header) map[string]string {
 		}
 	}
 	return result
+}
+
+func proxyNodeSelectorLabel(node, nodePrefix string) string {
+	if node != "" {
+		return "node=" + node
+	}
+	if nodePrefix != "" {
+		return "node_prefix=" + nodePrefix
+	}
+	return "any"
 }
 
 func collectResponseBody(queue chan map[string]interface{}, clientGone <-chan struct{}, ws *websocket.Conn, logReqID, nodeReqID, nodeKey, routeKey string) (string, bool, bool, string) {

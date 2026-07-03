@@ -26,6 +26,8 @@ const (
 	NodeWriteTimeout             = 5 * time.Second         // 向节点下发请求/取消的写超时
 	MetricsSnapshotPath          = "gateway_snapshot.json" // 指标快照保存路径
 	RouteMetricsOther            = "other"
+	NodeRoleMimo                 = "mimo"
+	NodeRoleProxy                = "proxy"
 )
 
 func maxConcurrentRequests() int {
@@ -38,6 +40,7 @@ func maxConcurrentRequests() int {
 type TunnelClient struct {
 	Conn          *websocket.Conn
 	Host          string
+	Role          string
 	CooldownUntil int64
 	BanUntil      int64
 	Mu            sync.Mutex
@@ -733,6 +736,7 @@ func GetAvailableClientsCount() int {
 type ActiveNodeInfo struct {
 	Index           int
 	Host            string
+	Role            string
 	Available       bool
 	BridgeReady     bool
 	CooldownUntil   int64
@@ -757,6 +761,7 @@ func GetActiveNodes() []ActiveNodeInfo {
 		result = append(result, ActiveNodeInfo{
 			Index:           i,
 			Host:            tc.Host,
+			Role:            normalizeNodeRole(tc.Role),
 			Available:       isAvailable,
 			BridgeReady:     ready,
 			CooldownUntil:   maxInt64(0, tc.CooldownUntil-now),
@@ -775,18 +780,24 @@ func maxInt64(a, b int64) int64 {
 }
 
 func RegisterClient(ws *websocket.Conn, host string) {
+	RegisterClientWithRole(ws, host, NodeRoleMimo)
+}
+
+func RegisterClientWithRole(ws *websocket.Conn, host, role string) {
 	mu.Lock()
 	defer mu.Unlock()
 
+	role = normalizeNodeRole(role)
 	client := &TunnelClient{
 		Conn: ws,
 		Host: host,
+		Role: role,
 	}
 	ActiveClients[ws] = client
 	ActiveList = append(ActiveList, ws)
 	WSToReqIDs[ws] = make(map[string]bool)
 	BridgeReady[ws] = true
-	log.Printf("[INFO] node=%s reason=ws_register active_clients=%d", host, len(ActiveList))
+	log.Printf("[INFO] node=%s role=%s reason=ws_register active_clients=%d", host, role, len(ActiveList))
 }
 
 // SendCancelToNode sends a cancel message to the node for a given request.
@@ -913,26 +924,29 @@ func GetNextClientExcluding(excluded map[*websocket.Conn]struct{}) *TunnelClient
 	return getNextClientLocked(excluded)
 }
 
-func GetNextClientMatchingHost(host, hostPrefix string) *TunnelClient {
+func GetNextProxyClientMatchingHost(host, hostPrefix string) *TunnelClient {
 	host = strings.TrimSpace(host)
 	hostPrefix = strings.TrimSpace(hostPrefix)
-	if host == "" && hostPrefix == "" {
-		return GetNextClient()
-	}
 
 	mu.Lock()
 	defer mu.Unlock()
 
 	return getNextClientMatchingLocked(nil, func(tc *TunnelClient) bool {
+		if !canHandleProxy(tc) {
+			return false
+		}
 		if host != "" {
 			return tc.Host == host
+		}
+		if hostPrefix == "" {
+			return true
 		}
 		return strings.HasPrefix(tc.Host, hostPrefix)
 	})
 }
 
 func getNextClientLocked(excluded map[*websocket.Conn]struct{}) *TunnelClient {
-	return getNextClientMatchingLocked(excluded, nil)
+	return getNextClientMatchingLocked(excluded, canHandleMimo)
 }
 
 func getNextClientMatchingLocked(excluded map[*websocket.Conn]struct{}, matches func(*TunnelClient) bool) *TunnelClient {
@@ -979,11 +993,30 @@ func getNextClientMatchingLocked(excluded map[*websocket.Conn]struct{}, matches 
 		pending := len(WSToReqIDs[c])
 		cdRemain := tc.CooldownUntil - now
 		banRemain := tc.BanUntil - now
-		r := fmt.Sprintf("%s[ready=%v cd=%ds ban=%ds pend=%d/%d]", tc.Host, ready, cdRemain, banRemain, pending, maxPending)
+		r := fmt.Sprintf("%s[role=%s ready=%v cd=%ds ban=%ds pend=%d/%d]", tc.Host, normalizeNodeRole(tc.Role), ready, cdRemain, banRemain, pending, maxPending)
 		reasons = append(reasons, r)
 	}
 	log.Printf("[WARN] no_available_node: all %d nodes skipped: %v", len(ActiveList), reasons)
 	return nil
+}
+
+func canHandleMimo(tc *TunnelClient) bool {
+	role := normalizeNodeRole(tc.Role)
+	return role == NodeRoleMimo
+}
+
+func canHandleProxy(tc *TunnelClient) bool {
+	role := normalizeNodeRole(tc.Role)
+	return role == NodeRoleProxy
+}
+
+func normalizeNodeRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case NodeRoleProxy:
+		return NodeRoleProxy
+	default:
+		return NodeRoleMimo
+	}
 }
 
 func CreatePendingRequest(ws *websocket.Conn, reqID string) chan map[string]interface{} {
