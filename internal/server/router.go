@@ -92,6 +92,8 @@ func SetupRouter() *gin.Engine {
 		anthropic.GET("/models", AnthropicModelsHandler)
 	}
 
+	r.Any("/proxy", auth.APIAuthMiddleware(), URLProxyHandler)
+
 	// WS Bridge (for nodes to connect to if needed, though native claw connects outbound)
 	// If bridging is still needed, add it here
 	r.GET("/ws", WSTunnelHandler)

@@ -93,6 +93,15 @@ func (c *ResponsesStreamConverter) ProcessChunk(chunkText string) []string {
 	return c.drainBufferedEvents(false)
 }
 
+func (c *ResponsesStreamConverter) KeepAlive() []string {
+	if !c.responseCreatedEmitted {
+		return c.emitResponseCreated()
+	}
+	return []string{c.emitEvent("response.in_progress", map[string]interface{}{
+		"response": c.baseResponse("in_progress"),
+	})}
+}
+
 func (c *ResponsesStreamConverter) handleDelta(delta map[string]interface{}) []string {
 	var events []string
 
@@ -393,6 +402,38 @@ func (c *ResponsesStreamConverter) handleDone() []string {
 
 func (c *ResponsesStreamConverter) Finalize() []string {
 	return c.handleDone()
+}
+
+func (c *ResponsesStreamConverter) Fail(message, code string) []string {
+	if c.completionEmitted {
+		return nil
+	}
+	if code == "" {
+		code = "server_error"
+	}
+	c.contentDone = true
+	c.completionEmitted = true
+
+	errObj := map[string]interface{}{
+		"message": message,
+		"type":    "server_error",
+		"code":    code,
+		"param":   nil,
+	}
+	resp := c.baseResponse("failed")
+	resp["error"] = map[string]interface{}{
+		"code":    code,
+		"message": message,
+	}
+
+	return []string{
+		c.emitEvent("error", map[string]interface{}{
+			"error": errObj,
+		}),
+		c.emitEvent("response.failed", map[string]interface{}{
+			"response": resp,
+		}),
+	}
 }
 
 func sortInts(values []int) {

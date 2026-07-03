@@ -33,7 +33,7 @@ var Models = []ModelDef{
 	{"mimo-v2.5-tts", "MiMo V2.5 TTS", 8192, 8192},
 	{"mimo-v2.5-tts-voicedesign", "MiMo V2.5 TTS VoiceDesign", 8192, 8192},
 	{"mimo-v2.5-tts-voiceclone", "MiMo V2.5 TTS VoiceClone", 8192, 8192},
-	{"mimo-v2.5-pro-ultraspeed", "MiMo V2.5 Pro UltraSpeed", 1048576, 131072},
+	// {"mimo-v2.5-pro-ultraspeed", "MiMo V2.5 Pro UltraSpeed", 1048576, 131072},
 }
 
 var modelIDsByLower = buildModelIDsByLower()
@@ -72,14 +72,15 @@ type BridgeWSPayload struct {
 
 // User Record for WebUI and Manager
 type UserRecord struct {
-	UserID       string  `json:"userId"`
-	Name         string  `json:"name"`
-	ServiceToken string  `json:"serviceToken"`
-	SessionKey   string  `json:"sessionKey"`
-	PH           string  `json:"xiaomichatbot_ph"`
-	AddedAt      float64 `json:"addedAt"`
-	Status       string  `json:"claw_status"`
-	RemainSec    float64 `json:"remain_sec"`
-	LastRefresh  float64 `json:"lastRefresh"`
-	DailyLimitAt float64 `json:"dailyLimitAt,omitempty"` // 北京时间当日触发429限额的时间戳，0点重置后自动清零
+	UserID         string  `json:"userId"`
+	Name           string  `json:"name"`
+	ServiceToken   string  `json:"serviceToken"`
+	SessionKey     string  `json:"sessionKey"`
+	PH             string  `json:"xiaomichatbot_ph"`
+	AddedAt        float64 `json:"addedAt"`
+	Status         string  `json:"claw_status"`
+	RemainSec      float64 `json:"remain_sec"`
+	LastRefresh    float64 `json:"lastRefresh"`
+	DailyLimitAt   float64 `json:"dailyLimitAt,omitempty"`   // 北京时间当日触发429限额的时间戳，0点重置后自动清零
+	DailyCreatedAt float64 `json:"dailyCreatedAt,omitempty"` // 北京时间当日创建成功的时间戳，0点重置后自动允许再次创建
 }

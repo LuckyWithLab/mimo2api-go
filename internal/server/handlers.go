@@ -480,6 +480,180 @@ func CompactResponsesHandler(c *gin.Context) {
 	commonCompletionsHandler(c, true)
 }
 
+func URLProxyHandler(c *gin.Context) {
+	startTime := time.Now()
+	reqID := uuid.New().String()
+	routeKey := "url_proxy"
+	targetURL := strings.TrimSpace(c.Query("url"))
+	if targetURL == "" {
+		writeErrorResponse(c, http.StatusBadRequest, "Gateway Error: missing url query parameter")
+		return
+	}
+
+	bodyText, err := io.ReadAll(io.LimitReader(c.Request.Body, 10*1024*1024))
+	if err != nil {
+		log.Printf("[ERR] req=%s route=%s status=400 dur=%dms reason=read_body_failed err=%v", reqID, routeKey, time.Since(startTime).Milliseconds(), err)
+		writeErrorResponse(c, http.StatusBadRequest, "Gateway Error: 读取请求失败")
+		return
+	}
+
+	targetWS := state.GetNextClientExcluding(nil)
+	if targetWS == nil {
+		log.Printf("[ERR] req=%s node=nil route=%s status=503 dur=%dms reason=no_available_node", reqID, routeKey, time.Since(startTime).Milliseconds())
+		writeErrorResponse(c, http.StatusServiceUnavailable, "Gateway Error: 没有可用的内网节点")
+		return
+	}
+
+	nodeKey := targetWS.Host
+	queue := state.CreatePendingRequest(targetWS.Conn, reqID)
+	payload := map[string]interface{}{
+		"type":       "req",
+		"mode":       "http_proxy",
+		"req_id":     reqID,
+		"method":     c.Request.Method,
+		"target_url": targetURL,
+		"headers":    proxyRequestHeaders(c.Request.Header),
+		"body":       string(bodyText),
+	}
+
+	targetWS.Mu.Lock()
+	_ = targetWS.Conn.SetWriteDeadline(time.Now().Add(state.NodeWriteTimeout))
+	err = targetWS.Conn.WriteJSON(payload)
+	_ = targetWS.Conn.SetWriteDeadline(time.Time{})
+	targetWS.Mu.Unlock()
+	if err != nil {
+		state.CleanupPendingRequest(reqID)
+		state.CooldownClient(targetWS.Conn, time.Duration(maxInt(config.NodeFailureCooldown, 0))*time.Second)
+		state.CloseClientConn(targetWS.Conn)
+		log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms reason=write_to_node_failed err=%v", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), err)
+		writeErrorResponse(c, http.StatusBadGateway, "Gateway Error: 节点下发失败")
+		return
+	}
+
+	nodeResponseIdleTimeout := time.Duration(maxInt(config.NodeResponseIdleTimeout, 30)) * time.Second
+	firstByteDeadline := time.NewTimer(nodeResponseIdleTimeout)
+	var firstMsg map[string]interface{}
+	select {
+	case firstMsg = <-queue:
+	case <-firstByteDeadline.C:
+		state.SendCancelToNode(targetWS.Conn, reqID)
+		state.CleanupPendingRequest(reqID)
+		state.CooldownClient(targetWS.Conn, time.Duration(maxInt(config.NodeTimeoutCooldown, 0))*time.Second)
+		log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms reason=idle_timeout threshold=%ds", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), config.NodeResponseIdleTimeout)
+		writeErrorResponse(c, http.StatusGatewayTimeout, "Gateway Error: 请求超时")
+		return
+	case <-c.Request.Context().Done():
+		firstByteDeadline.Stop()
+		state.SendCancelToNode(targetWS.Conn, reqID)
+		state.CleanupPendingRequest(reqID)
+		log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=client_disconnected_before_first_response", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds())
+		return
+	}
+	firstByteDeadline.Stop()
+
+	if firstMsg == nil {
+		state.CleanupPendingRequest(reqID)
+		state.CooldownClient(targetWS.Conn, time.Duration(maxInt(config.NodeFailureCooldown, 0))*time.Second)
+		log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms reason=channel_closed_no_response", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds())
+		writeErrorResponse(c, http.StatusGatewayTimeout, "Gateway Error: 节点无响应")
+		return
+	}
+
+	statusCode := http.StatusOK
+	if s, ok := firstMsg["status"].(float64); ok {
+		statusCode = int(s)
+	}
+	contentType, responseHeaders := normalizeResponseHeaders(firstMsg["headers"])
+	initialBody, _ := firstMsg["body"].(string)
+	firstMsgType, _ := firstMsg["type"].(string)
+
+	if firstMsgType == "error" {
+		state.CleanupPendingRequest(reqID)
+		if initialBody == "" {
+			initialBody = "Gateway Error: 节点返回错误"
+		}
+		log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms reason=node_error_first_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), initialBody)
+		writeErrorResponse(c, http.StatusBadGateway, initialBody)
+		return
+	}
+
+	applyResponseHeaders(c, responseHeaders)
+	c.Writer.Header().Set("Content-Type", contentType)
+	c.Status(statusCode)
+	flusher, _ := c.Writer.(http.Flusher)
+	if initialBody != "" {
+		if _, err := c.Writer.Write([]byte(initialBody)); err != nil {
+			state.SendCancelToNode(targetWS.Conn, reqID)
+			state.CleanupPendingRequest(reqID)
+			log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=proxy_write_failed err=%v", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), err)
+			return
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	if firstMsgType == "finish" {
+		state.CleanupPendingRequest(reqID)
+		return
+	}
+
+	streamIdleTimer := time.NewTimer(nodeResponseIdleTimeout)
+	defer streamIdleTimer.Stop()
+	for {
+		select {
+		case msg, ok := <-queue:
+			if !ok {
+				state.CleanupPendingRequest(reqID)
+				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms reason=proxy_channel_closed", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds())
+				return
+			}
+			if !streamIdleTimer.Stop() {
+				select {
+				case <-streamIdleTimer.C:
+				default:
+				}
+			}
+			streamIdleTimer.Reset(nodeResponseIdleTimeout)
+
+			msgType, _ := msg["type"].(string)
+			switch msgType {
+			case "finish":
+				state.CleanupPendingRequest(reqID)
+				return
+			case "chunk":
+				bodyStr, _ := msg["body"].(string)
+				if bodyStr == "" {
+					continue
+				}
+				if _, err := c.Writer.Write([]byte(bodyStr)); err != nil {
+					state.SendCancelToNode(targetWS.Conn, reqID)
+					state.CleanupPendingRequest(reqID)
+					log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=proxy_stream_write_failed err=%v", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), err)
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			case "error":
+				state.CleanupPendingRequest(reqID)
+				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms reason=node_error_msg", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds())
+				return
+			}
+		case <-streamIdleTimer.C:
+			state.SendCancelToNode(targetWS.Conn, reqID)
+			state.CleanupPendingRequest(reqID)
+			state.CooldownClient(targetWS.Conn, time.Duration(maxInt(config.NodeTimeoutCooldown, 0))*time.Second)
+			log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms reason=proxy_stream_idle_timeout threshold=%ds", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), config.NodeResponseIdleTimeout)
+			return
+		case <-c.Request.Context().Done():
+			state.SendCancelToNode(targetWS.Conn, reqID)
+			state.CleanupPendingRequest(reqID)
+			log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=client_disconnected", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds())
+			return
+		}
+	}
+}
+
 func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 	startTime := time.Now()
 	routeKey := "unknown" // will be set to modelName below
@@ -517,7 +691,8 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 		routeKey = modelName
 	}
 
-	// Convert for /v1/responses if needed
+	// Convert Responses API requests to chat completions because upstream does not
+	// support /v1/responses natively.
 	forwardPath := c.Request.URL.Path
 	if forwardPath == "/v1/messages" {
 		forwardPath = "/anthropic/v1/messages"
@@ -579,6 +754,31 @@ attemptLoop:
 
 		state.Metrics.RecordAttemptStarted(nodeKey)
 		queue := state.CreatePendingRequest(targetWS.Conn, nodeReqID)
+		var streamConv *converter.ResponsesStreamConverter
+		if isResponses && isStreaming {
+			streamConv = converter.NewResponsesStreamConverter(modelName)
+		}
+		writeResponsesStreamEvents := func(events []string) bool {
+			for _, ev := range events {
+				if _, err := c.Writer.Write([]byte(ev)); err != nil {
+					state.SendCancelToNode(targetWS.Conn, nodeReqID)
+					state.CleanupPendingRequest(nodeReqID)
+					log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms reason=responses_stream_write_failed err=%v", reqID, nodeKey, routeKey, statusClientClosed, time.Since(startTime).Milliseconds(), err)
+					return false
+				}
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return true
+		}
+		writeCommittedStreamError := func(errMsg, code string) {
+			if isResponses && streamConv != nil {
+				writeResponsesStreamEvents(streamConv.Fail(errMsg, code))
+				return
+			}
+			writeSSEError(c.Writer, flusher, errMsg)
+		}
 
 		payload := map[string]interface{}{
 			"type":   "req",
@@ -629,9 +829,15 @@ attemptLoop:
 						c.Writer.Header().Set("Connection", "keep-alive")
 						c.Writer.Header().Set("X-Accel-Buffering", "no")
 					}
-					_, _ = c.Writer.Write([]byte(": keepalive\n\n"))
-					if flusher != nil {
-						flusher.Flush()
+					if isResponses && streamConv != nil {
+						if !writeResponsesStreamEvents(streamConv.KeepAlive()) {
+							return
+						}
+					} else {
+						_, _ = c.Writer.Write([]byte(": keepalive\n\n"))
+						if flusher != nil {
+							flusher.Flush()
+						}
 					}
 					responseCommitted = true
 				}
@@ -648,7 +854,7 @@ attemptLoop:
 				if !responseCommitted {
 					writeErrorResponse(c, http.StatusGatewayTimeout, "Gateway Error: 请求超时")
 				} else {
-					writeSSEError(c.Writer, flusher, "Gateway Error: 请求超时")
+					writeCommittedStreamError("Gateway Error: 请求超时", "idle_timeout")
 				}
 				return
 			case <-c.Request.Context().Done():
@@ -683,7 +889,7 @@ attemptLoop:
 			if !responseCommitted {
 				writeErrorResponse(c, http.StatusGatewayTimeout, "Gateway Error: 节点无响应")
 			} else {
-				writeSSEError(c.Writer, flusher, "Gateway Error: 节点无响应")
+				writeCommittedStreamError("Gateway Error: 节点无响应", "channel_closed_no_response")
 			}
 			return
 		}
@@ -711,7 +917,7 @@ attemptLoop:
 			}
 			log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_first_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), initialBody)
 			if responseCommitted {
-				writeSSEError(c.Writer, flusher, initialBody)
+				writeCommittedStreamError(initialBody, "node_error")
 			} else {
 				writeErrorResponse(c, http.StatusBadGateway, initialBody)
 			}
@@ -731,7 +937,7 @@ attemptLoop:
 			state.Metrics.RecordRequestFinished(routeKey, authStatus, float64(time.Since(startTime).Milliseconds()), ttftMs, false)
 			log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=%s body=%s", reqID, nodeKey, routeKey, authStatus, time.Since(startTime).Milliseconds(), int64(ttftMs), authReason, bodyFingerprint(initialBody))
 			if responseCommitted {
-				writeSSEError(c.Writer, flusher, "Authentication failed: "+authReason)
+				writeCommittedStreamError("Authentication failed: "+authReason, "authentication_failed")
 			} else {
 				applyResponseHeaders(c, responseHeaders)
 				c.Data(authStatus, contentType, []byte(initialBody))
@@ -756,7 +962,7 @@ attemptLoop:
 			state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
 			log.Printf("[ERR] req=%s node=%s route=%s status=%d dur=%dms ttft=%dms reason=upstream_error body=%s", reqID, nodeKey, routeKey, statusCode, time.Since(startTime).Milliseconds(), int64(ttftMs), bodyFingerprint(initialBody))
 			if responseCommitted {
-				writeSSEError(c.Writer, flusher, "Upstream error: "+strconv.Itoa(statusCode))
+				writeCommittedStreamError("Upstream error: "+strconv.Itoa(statusCode), "upstream_error")
 			} else {
 				applyResponseHeaders(c, responseHeaders)
 				c.Data(statusCode, contentType, []byte(initialBody))
@@ -775,7 +981,7 @@ attemptLoop:
 				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
 				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=upstream_empty_body", reqID, nodeKey, routeKey, int64(durationMs), int64(ttftMs))
 				if responseCommitted {
-					writeSSEError(c.Writer, flusher, "Gateway Error: 上游返回空响应")
+					writeCommittedStreamError("Gateway Error: 上游返回空响应", "upstream_empty_body")
 				} else {
 					writeErrorResponse(c, http.StatusBadGateway, "Gateway Error: 上游返回空响应")
 				}
@@ -893,11 +1099,6 @@ attemptLoop:
 			return
 		}
 
-		var streamConv *converter.ResponsesStreamConverter
-		if isResponses {
-			streamConv = converter.NewResponsesStreamConverter(modelName)
-		}
-
 		headersApplied := responseCommitted // response 已提交时跳过 SSE 基础 headers
 		applyStreamHeaders := func() {
 			// 上游特定 headers 始终要应用（如 x-request-id 等）
@@ -911,6 +1112,14 @@ attemptLoop:
 			c.Writer.Header().Set("X-Accel-Buffering", "no")
 			headersApplied = true
 			responseCommitted = true
+		}
+		writeStreamTerminalError := func(errMsg, code string) bool {
+			applyStreamHeaders()
+			if isResponses && streamConv != nil {
+				return writeResponsesStreamEvents(streamConv.Fail(errMsg, code))
+			}
+			writeSSEError(c.Writer, flusher, errMsg)
+			return true
 		}
 
 		streamHasWritten := false
@@ -934,7 +1143,7 @@ attemptLoop:
 						state.CooldownClient(targetWS.Conn, nodeFailureCooldown)
 						log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=stream_channel_closed", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs))
 						if responseCommitted {
-							writeSSEError(c.Writer, flusher, "Gateway Error: 流式连接异常中断")
+							writeStreamTerminalError("Gateway Error: 流式连接异常中断", "stream_channel_closed")
 						} else {
 							writeErrorResponse(c, statusCode, "Gateway Error: 流式连接异常中断")
 						}
@@ -950,11 +1159,18 @@ attemptLoop:
 				}
 				streamIdleTimer.Reset(nodeResponseIdleTimeout)
 			case <-streamKATicker.C:
-				// SSE 注释行 keepalive，防止 CF 超时
+				// Use a real Responses event for Codex; comment heartbeats are ignored
+				// by its EventSource parser and do not reset its SSE idle timer.
 				applyStreamHeaders()
-				_, _ = c.Writer.Write([]byte(": keepalive\n\n"))
-				if flusher != nil {
-					flusher.Flush()
+				if isResponses && streamConv != nil {
+					if !writeResponsesStreamEvents(streamConv.KeepAlive()) {
+						return
+					}
+				} else {
+					_, _ = c.Writer.Write([]byte(": keepalive\n\n"))
+					if flusher != nil {
+						flusher.Flush()
+					}
 				}
 				continue
 			case <-clientGone:
@@ -972,6 +1188,7 @@ attemptLoop:
 				state.Metrics.RecordAttemptFinished(nodeKey, statusCode, ttftMs, false)
 				state.CooldownClient(targetWS.Conn, nodeTimeoutCooldown)
 				log.Printf("[ERR] req=%s node=%s route=%s status=504 dur=%dms ttft=%dms reason=stream_idle_timeout threshold=%ds", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), config.NodeResponseIdleTimeout)
+				writeStreamTerminalError("Gateway Error: 流式响应超时", "stream_idle_timeout")
 				return
 			}
 
@@ -1103,7 +1320,7 @@ attemptLoop:
 				}
 				log.Printf("[ERR] req=%s node=%s route=%s status=502 dur=%dms ttft=%dms reason=node_error_msg body=%s", reqID, nodeKey, routeKey, time.Since(startTime).Milliseconds(), int64(ttftMs), errBody)
 				if responseCommitted {
-					writeSSEError(c.Writer, flusher, errBody)
+					writeStreamTerminalError(errBody, "node_stream_error")
 				} else {
 					writeErrorResponse(c, statusCode, errBody)
 				}
@@ -1348,6 +1565,20 @@ func applyResponseHeaders(c *gin.Context, headers map[string]string) {
 	for key, value := range headers {
 		c.Writer.Header().Set(key, value)
 	}
+}
+
+func proxyRequestHeaders(headers http.Header) map[string]string {
+	result := make(map[string]string, len(headers))
+	for key, values := range headers {
+		lowerKey := strings.ToLower(key)
+		switch lowerKey {
+		case "content-length":
+			continue
+		default:
+			result[key] = strings.Join(values, ", ")
+		}
+	}
+	return result
 }
 
 func collectResponseBody(queue chan map[string]interface{}, clientGone <-chan struct{}, ws *websocket.Conn, logReqID, nodeReqID, nodeKey, routeKey string) (string, bool, bool, string) {

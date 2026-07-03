@@ -20,10 +20,6 @@ func ConvertRequest(body []byte) (map[string]interface{}, error) {
 }
 
 func ResponsesConvertRequest(req map[string]interface{}) (map[string]interface{}, error) {
-	if previousResponseID := asString(req["previous_response_id"]); previousResponseID != "" {
-		return nil, fmt.Errorf("previous_response_id is not supported by the chat completions bridge")
-	}
-
 	chatReq := cloneMap(req)
 	var chatMessages []map[string]interface{}
 

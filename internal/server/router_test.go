@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -102,6 +103,128 @@ func TestRouterV1MessagesForwarding(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Error("timeout waiting for request to be forwarded via WS")
+	}
+}
+
+func TestRouterV1ResponsesBridgeRouting(t *testing.T) {
+	resetGatewayStateForTest()
+	oldAPIKeys := config.APIKeys
+	oldWSAuthToken := config.WSAuthToken
+	config.APIKeys = nil
+	config.WSAuthToken = ""
+	defer func() {
+		config.APIKeys = oldAPIKeys
+		config.WSAuthToken = oldWSAuthToken
+		resetGatewayStateForTest()
+	}()
+
+	r := SetupRouter()
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http", "ws", 1) + "/ws"
+	dialer := websocket.Dialer{}
+	wsConn, _, err := dialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial websocket: %v", err)
+	}
+	defer wsConn.Close()
+
+	pathChan := make(chan string, 1)
+	bodyChan := make(chan string, 1)
+
+	go func() {
+		for {
+			var msg map[string]interface{}
+			if err := wsConn.ReadJSON(&msg); err != nil {
+				return
+			}
+			if msgType, ok := msg["type"].(string); ok && msgType == "req" {
+				if path, ok := msg["path"].(string); ok {
+					pathChan <- path
+				}
+				if body, ok := msg["body"].(string); ok {
+					bodyChan <- body
+				}
+				reqID, _ := msg["req_id"].(string)
+				writeRouterTestResponse(wsConn, reqID, `{"id":"chatcmpl_ok","object":"chat.completion","model":"mimo-v2.5","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+			}
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	reqBody := map[string]interface{}{
+		"model":  "mimo-v2.5",
+		"input":  "hello",
+		"stream": false,
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequest("POST", server.URL+"/v1/responses", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("failed to do HTTP request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+	if contentType := resp.Header.Get("Content-Type"); !strings.Contains(contentType, "application/json") {
+		t.Fatalf("expected application/json response, got %q", contentType)
+	}
+	rawResp, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if !strings.Contains(string(rawResp), `"object":"response"`) {
+		t.Fatalf("expected bridged responses body, got %s", string(rawResp))
+	}
+
+	select {
+	case path := <-pathChan:
+		if path != "/v1/chat/completions" {
+			t.Errorf("expected path /v1/chat/completions, got %q", path)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("timeout waiting for request to be forwarded via WS")
+	}
+
+	select {
+	case body := <-bodyChan:
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+			t.Fatalf("failed to parse forwarded body: %v", err)
+		}
+		if _, ok := parsed["input"]; ok {
+			t.Error("did not expect input field in bridged chat completions request")
+		}
+		if parsed["stream"] != false {
+			t.Errorf("expected stream=false to be preserved, got %v", parsed["stream"])
+		}
+		messages, ok := parsed["messages"].([]interface{})
+		if !ok || len(messages) == 0 {
+			t.Fatalf("expected messages field in bridged body, got %T", parsed["messages"])
+		}
+		foundUser := false
+		for _, raw := range messages {
+			msg, ok := raw.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if msg["role"] == "user" && msg["content"] == "hello" {
+				foundUser = true
+				break
+			}
+		}
+		if !foundUser {
+			t.Errorf("expected bridged messages to include user input, got %v", messages)
+		}
+	case <-time.After(3 * time.Second):
+		t.Error("timeout waiting for body")
 	}
 }
 

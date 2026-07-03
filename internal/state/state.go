@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -912,7 +913,29 @@ func GetNextClientExcluding(excluded map[*websocket.Conn]struct{}) *TunnelClient
 	return getNextClientLocked(excluded)
 }
 
+func GetNextClientMatchingHost(host, hostPrefix string) *TunnelClient {
+	host = strings.TrimSpace(host)
+	hostPrefix = strings.TrimSpace(hostPrefix)
+	if host == "" && hostPrefix == "" {
+		return GetNextClient()
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	return getNextClientMatchingLocked(nil, func(tc *TunnelClient) bool {
+		if host != "" {
+			return tc.Host == host
+		}
+		return strings.HasPrefix(tc.Host, hostPrefix)
+	})
+}
+
 func getNextClientLocked(excluded map[*websocket.Conn]struct{}) *TunnelClient {
+	return getNextClientMatchingLocked(excluded, nil)
+}
+
+func getNextClientMatchingLocked(excluded map[*websocket.Conn]struct{}, matches func(*TunnelClient) bool) *TunnelClient {
 	if len(ActiveList) == 0 {
 		return nil
 	}
@@ -932,6 +955,9 @@ func getNextClientLocked(excluded map[*websocket.Conn]struct{}) *TunnelClient {
 		}
 
 		if tc, ok := ActiveClients[c]; ok {
+			if matches != nil && !matches(tc) {
+				continue
+			}
 			ready := BridgeReady[c]
 			// 修复：增加了对就绪状态和并发请求上限的校验
 			if ready && tc.CooldownUntil <= now && tc.BanUntil <= now {

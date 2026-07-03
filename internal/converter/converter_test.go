@@ -192,6 +192,56 @@ func TestResponsesStreamConverterEmitsToolCallArgumentLifecycle(t *testing.T) {
 	}
 }
 
+func TestResponsesStreamConverterEmitsFailedTerminalEvent(t *testing.T) {
+	converter := NewResponsesStreamConverter("mimo-test")
+
+	events := converter.Fail("Gateway Error: stream timed out", "stream_idle_timeout")
+	parsed := parseSSEEvents(t, events)
+	assertSequenceNumbers(t, parsed)
+
+	errEvent := findEvent(t, parsed, "error")
+	errObj := mustMapField(t, errEvent.Payload, "error")
+	if got := mustStringField(t, errObj, "code"); got != "stream_idle_timeout" {
+		t.Fatalf("expected error code stream_idle_timeout, got %q", got)
+	}
+
+	failed := findEvent(t, parsed, "response.failed")
+	response := mustMapField(t, failed.Payload, "response")
+	if got := mustStringField(t, response, "status"); got != "failed" {
+		t.Fatalf("expected failed response status, got %q", got)
+	}
+	respErr := mustMapField(t, response, "error")
+	if got := mustStringField(t, respErr, "message"); got != "Gateway Error: stream timed out" {
+		t.Fatalf("expected failed response message, got %q", got)
+	}
+
+	if again := converter.Finalize(); len(again) != 0 {
+		t.Fatalf("expected no completion after failure, got %d events", len(again))
+	}
+}
+
+func TestResponsesStreamConverterKeepAliveUsesResponsesEvents(t *testing.T) {
+	converter := NewResponsesStreamConverter("mimo-test")
+
+	events := converter.KeepAlive()
+	events = append(events, converter.KeepAlive()...)
+
+	parsed := parseSSEEvents(t, events)
+	assertSequenceNumbers(t, parsed)
+
+	created := findEvent(t, parsed, "response.created")
+	createdResp := mustMapField(t, created.Payload, "response")
+	if got := mustStringField(t, createdResp, "status"); got != "in_progress" {
+		t.Fatalf("expected created response to be in_progress, got %q", got)
+	}
+
+	inProgress := findEvent(t, parsed, "response.in_progress")
+	progressResp := mustMapField(t, inProgress.Payload, "response")
+	if got := mustStringField(t, progressResp, "id"); got != mustStringField(t, createdResp, "id") {
+		t.Fatalf("expected heartbeat response id to stay stable, got %q", got)
+	}
+}
+
 func TestResponsesConvertRequestHandlesCompactInstructions(t *testing.T) {
 	req := map[string]interface{}{
 		"model":        "mimo-v2.5-pro",
@@ -281,13 +331,24 @@ func TestConvertResponsesResponseProducesValidCompactFormat(t *testing.T) {
 	}
 }
 
-func TestResponsesConvertRequestRejectsPreviousResponseID(t *testing.T) {
-	_, err := ResponsesConvertRequest(map[string]interface{}{
+func TestResponsesConvertRequestDropsPreviousResponseID(t *testing.T) {
+	result, err := ResponsesConvertRequest(map[string]interface{}{
 		"model":                "mimo-test",
 		"previous_response_id": "resp_123",
+		"input":                "continue",
 	})
-	if err == nil {
-		t.Fatal("expected previous_response_id to be rejected")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := result["previous_response_id"]; ok {
+		t.Fatal("did not expect previous_response_id to be forwarded to chat completions")
+	}
+	messages, ok := result["messages"].([]map[string]interface{})
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one converted message, got %T %v", result["messages"], result["messages"])
+	}
+	if messages[0]["role"] != "user" || messages[0]["content"] != "continue" {
+		t.Fatalf("unexpected converted message: %v", messages[0])
 	}
 }
 
