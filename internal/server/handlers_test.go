@@ -106,6 +106,57 @@ func TestApplyModelMappingKeepsMimoPrefix(t *testing.T) {
 	}
 }
 
+func TestConvertSystemPromptToUserForMimo25ConvertsMessageRoles(t *testing.T) {
+	body := []byte(`{"model":"mimo-v2.5","messages":[{"role":"system","content":"obey me"},{"role":"user","content":"hello"}]}`)
+	converted := convertSystemPromptToUserForMimo25(body, "mimo-v2.5")
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(converted, &got); err != nil {
+		t.Fatalf("failed to unmarshal converted body: %v", err)
+	}
+	messages, ok := got["messages"].([]interface{})
+	if !ok || len(messages) != 2 {
+		t.Fatalf("expected two messages, got %T %v", got["messages"], got["messages"])
+	}
+	first, _ := messages[0].(map[string]interface{})
+	if first["role"] != "user" {
+		t.Fatalf("expected system message role to become user, got %v", first["role"])
+	}
+	if first["content"] != "obey me" {
+		t.Fatalf("expected content to be preserved, got %v", first["content"])
+	}
+}
+
+func TestConvertSystemPromptToUserForMimo25MovesTopLevelSystem(t *testing.T) {
+	body := []byte(`{"model":"mimo-v2.5","system":"be concise","messages":[{"role":"user","content":"hello"}]}`)
+	converted := convertSystemPromptToUserForMimo25(body, "mimo-v2.5")
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(converted, &got); err != nil {
+		t.Fatalf("failed to unmarshal converted body: %v", err)
+	}
+	if _, ok := got["system"]; ok {
+		t.Fatal("did not expect top-level system field to be forwarded")
+	}
+	messages, ok := got["messages"].([]interface{})
+	if !ok || len(messages) != 2 {
+		t.Fatalf("expected system prompt to be prepended to messages, got %T %v", got["messages"], got["messages"])
+	}
+	first, _ := messages[0].(map[string]interface{})
+	if first["role"] != "user" || first["content"] != "be concise" {
+		t.Fatalf("unexpected prepended message: %v", first)
+	}
+}
+
+func TestConvertSystemPromptToUserForMimo25LeavesOtherModelsUntouched(t *testing.T) {
+	body := []byte(`{"model":"mimo-v2.5-pro","messages":[{"role":"system","content":"keep system"}]}`)
+	converted := convertSystemPromptToUserForMimo25(body, "mimo-v2.5-pro")
+
+	if string(converted) != string(body) {
+		t.Fatalf("expected non-mimo-v2.5 body to remain unchanged, got %s", string(converted))
+	}
+}
+
 func TestChatCompletionsHandlerRetriesUnauthorizedNode(t *testing.T) {
 	resetGatewayStateForTest()
 

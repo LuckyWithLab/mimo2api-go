@@ -106,6 +106,94 @@ func TestRouterV1MessagesForwarding(t *testing.T) {
 	}
 }
 
+func TestRouterMimo25ConvertsSystemRoleBeforeForwarding(t *testing.T) {
+	resetGatewayStateForTest()
+	oldAPIKeys := config.APIKeys
+	oldWSAuthToken := config.WSAuthToken
+	config.APIKeys = nil
+	config.WSAuthToken = ""
+	defer func() {
+		config.APIKeys = oldAPIKeys
+		config.WSAuthToken = oldWSAuthToken
+		resetGatewayStateForTest()
+	}()
+
+	r := SetupRouter()
+	server := httptest.NewServer(r)
+	defer server.Close()
+
+	wsURL := strings.Replace(server.URL, "http", "ws", 1) + "/ws"
+	dialer := websocket.Dialer{}
+	wsConn, _, err := dialer.Dial(wsURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial websocket: %v", err)
+	}
+	defer wsConn.Close()
+
+	bodyChan := make(chan string, 1)
+
+	go func() {
+		for {
+			var msg map[string]interface{}
+			if err := wsConn.ReadJSON(&msg); err != nil {
+				return
+			}
+			if msgType, ok := msg["type"].(string); ok && msgType == "req" {
+				if body, ok := msg["body"].(string); ok {
+					bodyChan <- body
+				}
+				reqID, _ := msg["req_id"].(string)
+				writeRouterTestResponse(wsConn, reqID, `{"id":"chatcmpl_ok","object":"chat.completion","model":"mimo-v2.5","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+			}
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	reqBody := map[string]interface{}{
+		"model":  "mimo-v2.5",
+		"stream": false,
+		"messages": []map[string]string{
+			{"role": "system", "content": "be concise"},
+			{"role": "user", "content": "hello"},
+		},
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	req, _ := http.NewRequest("POST", server.URL+"/v1/chat/completions", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("failed to do HTTP request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	select {
+	case body := <-bodyChan:
+		var parsed map[string]interface{}
+		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+			t.Fatalf("failed to parse forwarded body: %v", err)
+		}
+		messages, ok := parsed["messages"].([]interface{})
+		if !ok || len(messages) != 2 {
+			t.Fatalf("expected two forwarded messages, got %T %v", parsed["messages"], parsed["messages"])
+		}
+		firstMsg := messages[0].(map[string]interface{})
+		if firstMsg["role"] != "user" {
+			t.Fatalf("expected first forwarded role to be user, got %q", firstMsg["role"])
+		}
+		if firstMsg["content"] != "be concise" {
+			t.Fatalf("expected system content to be preserved, got %q", firstMsg["content"])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timeout waiting for body")
+	}
+}
+
 func TestRouterV1ResponsesBridgeRouting(t *testing.T) {
 	resetGatewayStateForTest()
 	oldAPIKeys := config.APIKeys

@@ -395,6 +395,48 @@ func injectSystemPrompt(bodyText []byte, model string) []byte {
 	return newBody
 }
 
+func convertSystemPromptToUserForMimo25(bodyText []byte, model string) []byte {
+	if model != "mimo-v2.5" {
+		return bodyText
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(bodyText, &data); err != nil {
+		return bodyText
+	}
+
+	changed := false
+	messages, _ := data["messages"].([]interface{})
+	if systemPrompt, ok := data["system"]; ok && systemPrompt != nil {
+		systemMsg := map[string]interface{}{
+			"role":    "user",
+			"content": systemPrompt,
+		}
+		messages = append([]interface{}{systemMsg}, messages...)
+		data["messages"] = messages
+		delete(data, "system")
+		changed = true
+	}
+
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if strings.EqualFold(strings.TrimSpace(role), "system") {
+			msg["role"] = "user"
+			changed = true
+		}
+	}
+
+	if !changed {
+		return bodyText
+	}
+	newBody, _ := json.Marshal(data)
+	return newBody
+}
+
 func PutModelMappingHandler(c *gin.Context) {
 	var newMapping map[string]string
 	if err := c.ShouldBindJSON(&newMapping); err != nil {
@@ -724,6 +766,7 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 
 	// 注入上游必需的系统提示词（两条路径统一处理）
 	bodyText = injectSystemPrompt(bodyText, modelName)
+	bodyText = convertSystemPromptToUserForMimo25(bodyText, modelName)
 
 	// Record request start
 	state.Metrics.RecordRequestStarted(routeKey, isStreaming)
