@@ -151,16 +151,20 @@ func TestRouterMimo25ConvertsSystemRoleBeforeForwarding(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	reqBody := map[string]interface{}{
-		"model":  "mimo-v2.5",
-		"stream": false,
+		"max_tokens": 1024,
+		"model":      "mimo-v2.5",
+		"stream":     false,
+		"system": []map[string]string{
+			{"type": "text", "text": "Today's date is 2024-06-01."},
+		},
 		"messages": []map[string]string{
-			{"role": "system", "content": "be concise"},
 			{"role": "user", "content": "hello"},
 		},
 	}
 	bodyBytes, _ := json.Marshal(reqBody)
-	req, _ := http.NewRequest("POST", server.URL+"/v1/chat/completions", bytes.NewBuffer(bodyBytes))
+	req, _ := http.NewRequest("POST", server.URL+"/v1/messages", bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
 
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Do(req)
@@ -178,16 +182,28 @@ func TestRouterMimo25ConvertsSystemRoleBeforeForwarding(t *testing.T) {
 		if err := json.Unmarshal([]byte(body), &parsed); err != nil {
 			t.Fatalf("failed to parse forwarded body: %v", err)
 		}
+		if _, ok := parsed["system"]; ok {
+			t.Fatal("did not expect top-level system field to be forwarded")
+		}
 		messages, ok := parsed["messages"].([]interface{})
-		if !ok || len(messages) != 2 {
-			t.Fatalf("expected two forwarded messages, got %T %v", parsed["messages"], parsed["messages"])
+		if !ok || len(messages) != 1 {
+			t.Fatalf("expected one forwarded message, got %T %v", parsed["messages"], parsed["messages"])
 		}
 		firstMsg := messages[0].(map[string]interface{})
 		if firstMsg["role"] != "user" {
 			t.Fatalf("expected first forwarded role to be user, got %q", firstMsg["role"])
 		}
-		if firstMsg["content"] != "be concise" {
-			t.Fatalf("expected system content to be preserved, got %q", firstMsg["content"])
+		content, ok := firstMsg["content"].([]interface{})
+		if !ok || len(content) != 2 {
+			t.Fatalf("expected merged content blocks, got %T %v", firstMsg["content"], firstMsg["content"])
+		}
+		systemPart := content[0].(map[string]interface{})
+		if systemPart["type"] != "text" || systemPart["text"] != "Today's date is 2024-06-01." {
+			t.Fatalf("unexpected system content block: %v", systemPart)
+		}
+		userPart := content[1].(map[string]interface{})
+		if userPart["type"] != "text" || userPart["text"] != "hello" {
+			t.Fatalf("unexpected user content block: %v", userPart)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timeout waiting for body")

@@ -115,14 +115,14 @@ func TestConvertSystemPromptToUserForMimo25ConvertsMessageRoles(t *testing.T) {
 		t.Fatalf("failed to unmarshal converted body: %v", err)
 	}
 	messages, ok := got["messages"].([]interface{})
-	if !ok || len(messages) != 2 {
-		t.Fatalf("expected two messages, got %T %v", got["messages"], got["messages"])
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one merged message, got %T %v", got["messages"], got["messages"])
 	}
 	first, _ := messages[0].(map[string]interface{})
 	if first["role"] != "user" {
 		t.Fatalf("expected system message role to become user, got %v", first["role"])
 	}
-	if first["content"] != "obey me" {
+	if first["content"] != "obey me\n\nhello" {
 		t.Fatalf("expected content to be preserved, got %v", first["content"])
 	}
 }
@@ -139,12 +139,45 @@ func TestConvertSystemPromptToUserForMimo25MovesTopLevelSystem(t *testing.T) {
 		t.Fatal("did not expect top-level system field to be forwarded")
 	}
 	messages, ok := got["messages"].([]interface{})
-	if !ok || len(messages) != 2 {
-		t.Fatalf("expected system prompt to be prepended to messages, got %T %v", got["messages"], got["messages"])
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected system prompt to be merged into messages, got %T %v", got["messages"], got["messages"])
 	}
 	first, _ := messages[0].(map[string]interface{})
-	if first["role"] != "user" || first["content"] != "be concise" {
-		t.Fatalf("unexpected prepended message: %v", first)
+	if first["role"] != "user" || first["content"] != "be concise\n\nhello" {
+		t.Fatalf("unexpected merged message: %v", first)
+	}
+}
+
+func TestConvertSystemPromptToUserForMimo25MergesTopLevelSystemBlocks(t *testing.T) {
+	body := []byte(`{"model":"mimo-v2.5","system":[{"type":"text","text":"Today's date is 2024-06-01."}],"messages":[{"role":"user","content":"Hello, world"}]}`)
+	converted := convertSystemPromptToUserForMimo25(body, "mimo-v2.5")
+
+	var got map[string]interface{}
+	if err := json.Unmarshal(converted, &got); err != nil {
+		t.Fatalf("failed to unmarshal converted body: %v", err)
+	}
+	if _, ok := got["system"]; ok {
+		t.Fatal("did not expect top-level system field to be forwarded")
+	}
+	messages, ok := got["messages"].([]interface{})
+	if !ok || len(messages) != 1 {
+		t.Fatalf("expected one merged user message, got %T %v", got["messages"], got["messages"])
+	}
+	first, _ := messages[0].(map[string]interface{})
+	if first["role"] != "user" {
+		t.Fatalf("expected role user, got %v", first["role"])
+	}
+	content, ok := first["content"].([]interface{})
+	if !ok || len(content) != 2 {
+		t.Fatalf("expected merged content blocks, got %T %v", first["content"], first["content"])
+	}
+	systemPart, _ := content[0].(map[string]interface{})
+	if systemPart["type"] != "text" || systemPart["text"] != "Today's date is 2024-06-01." {
+		t.Fatalf("unexpected system content part: %v", systemPart)
+	}
+	userPart, _ := content[1].(map[string]interface{})
+	if userPart["type"] != "text" || userPart["text"] != "Hello, world" {
+		t.Fatalf("unexpected user content part: %v", userPart)
 	}
 }
 

@@ -408,26 +408,43 @@ func convertSystemPromptToUserForMimo25(bodyText []byte, model string) []byte {
 	changed := false
 	messages, _ := data["messages"].([]interface{})
 	if systemPrompt, ok := data["system"]; ok && systemPrompt != nil {
-		systemMsg := map[string]interface{}{
-			"role":    "user",
-			"content": systemPrompt,
-		}
-		messages = append([]interface{}{systemMsg}, messages...)
-		data["messages"] = messages
 		delete(data, "system")
+		messages = mergeSystemPromptIntoMessages(messages, systemPrompt)
 		changed = true
 	}
 
+	normalizedMessages := make([]interface{}, 0, len(messages))
+	var pendingSystem interface{}
 	for _, raw := range messages {
 		msg, ok := raw.(map[string]interface{})
 		if !ok {
+			normalizedMessages = append(normalizedMessages, raw)
 			continue
 		}
 		role, _ := msg["role"].(string)
 		if strings.EqualFold(strings.TrimSpace(role), "system") {
-			msg["role"] = "user"
+			pendingSystem = mergePromptContent(pendingSystem, msg["content"])
+			changed = true
+			continue
+		}
+		if pendingSystem != nil && strings.EqualFold(strings.TrimSpace(role), "user") {
+			msg["content"] = mergePromptContent(pendingSystem, msg["content"])
+			pendingSystem = nil
 			changed = true
 		}
+		normalizedMessages = append(normalizedMessages, msg)
+	}
+	if pendingSystem != nil {
+		normalizedMessages = append([]interface{}{
+			map[string]interface{}{
+				"role":    "user",
+				"content": pendingSystem,
+			},
+		}, normalizedMessages...)
+		changed = true
+	}
+	if changed {
+		data["messages"] = normalizedMessages
 	}
 
 	if !changed {
@@ -435,6 +452,77 @@ func convertSystemPromptToUserForMimo25(bodyText []byte, model string) []byte {
 	}
 	newBody, _ := json.Marshal(data)
 	return newBody
+}
+
+func mergeSystemPromptIntoMessages(messages []interface{}, systemPrompt interface{}) []interface{} {
+	if isEmptyPromptContent(systemPrompt) {
+		return messages
+	}
+	for _, raw := range messages {
+		msg, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		role, _ := msg["role"].(string)
+		if strings.EqualFold(strings.TrimSpace(role), "user") {
+			msg["content"] = mergePromptContent(systemPrompt, msg["content"])
+			return messages
+		}
+	}
+	return append([]interface{}{
+		map[string]interface{}{
+			"role":    "user",
+			"content": systemPrompt,
+		},
+	}, messages...)
+}
+
+func mergePromptContent(prefix, content interface{}) interface{} {
+	if isEmptyPromptContent(prefix) {
+		return content
+	}
+	if isEmptyPromptContent(content) {
+		return prefix
+	}
+
+	prefixParts, prefixWasParts := promptContentAsParts(prefix)
+	contentParts, contentWasParts := promptContentAsParts(content)
+	if prefixWasParts || contentWasParts {
+		return append(prefixParts, contentParts...)
+	}
+
+	prefixText, _ := prefix.(string)
+	contentText, _ := content.(string)
+	return prefixText + "\n\n" + contentText
+}
+
+func isEmptyPromptContent(content interface{}) bool {
+	switch value := content.(type) {
+	case nil:
+		return true
+	case string:
+		return strings.TrimSpace(value) == ""
+	case []interface{}:
+		return len(value) == 0
+	default:
+		return false
+	}
+}
+
+func promptContentAsParts(content interface{}) ([]interface{}, bool) {
+	switch value := content.(type) {
+	case []interface{}:
+		parts := make([]interface{}, len(value))
+		copy(parts, value)
+		return parts, true
+	case map[string]interface{}:
+		return []interface{}{value}, true
+	case string:
+		return []interface{}{map[string]interface{}{"type": "text", "text": value}}, false
+	default:
+		encoded, _ := json.Marshal(value)
+		return []interface{}{map[string]interface{}{"type": "text", "text": string(encoded)}}, true
+	}
 }
 
 func PutModelMappingHandler(c *gin.Context) {
