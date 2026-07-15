@@ -68,6 +68,12 @@ func getNextIP() string {
 	return ip
 }
 
+// NextAistudioIP returns the next forced connect IP for aistudio (empty = normal DNS).
+func NextAistudioIP() string { return getNextIP() }
+
+// HTTPClientForAistudio returns a shared HTTP client that respects AISTUDIO_PROXY / connect IPs.
+func HTTPClientForAistudio(resolvedIP string) *http.Client { return getHTTPClient(resolvedIP) }
+
 // parseAistudioProxy 解析代理配置，返回 (httpProxyFunc, socksDialContext)
 // httpProxyFunc 用于 http.Transport.Proxy / websocket.Dialer.Proxy
 // socksDialContext 用于替换 DialContext（SOCKS5 代理时生效，且忽略 resolvedIP）

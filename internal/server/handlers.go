@@ -25,6 +25,7 @@ import (
 	"mimo2api/internal/metrics"
 	"mimo2api/internal/models"
 	"mimo2api/internal/state"
+	"mimo2api/internal/tts"
 )
 
 const statusClientClosed = 499
@@ -60,6 +61,7 @@ func SystemStatusHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		// 修复: 避免产生并发竞争(Data Race)引发宕机
 		"active_clients": state.GetConnectedClientsCount(),
+		"tts":            tts.StatusSnapshot(),
 	})
 }
 
@@ -824,6 +826,45 @@ func commonCompletionsHandler(c *gin.Context, isResponses bool) {
 	}
 	if modelName != "" {
 		routeKey = modelName
+	}
+
+	// Studio webchat voice: voicedesign/voiceclone TTS + ASR.
+	// Preset mimo-v2.5-tts keeps claw/node bridge path.
+	// TTS protocol: speech-synthesis-v2.5; ASR: Speech-Recognition chat + input_audio.
+	if tts.IsWebchatVoiceModel(modelName) {
+		if reqData == nil {
+			if err := json.Unmarshal(bodyText, &reqData); err != nil {
+				statusCode = 400
+				state.Metrics.RecordRequestStarted(routeKey, true)
+				state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, false)
+				writeErrorResponse(c, http.StatusBadRequest, "Gateway Error: Invalid JSON")
+				return
+			}
+		}
+		// normalize model id in body for metrics/logs
+		if canon, ok := tts.NormalizeModel(modelName); ok {
+			modelName = canon
+			routeKey = canon
+			reqData["model"] = canon
+		} else if canon, ok := tts.NormalizeASRModel(modelName); ok {
+			modelName = canon
+			routeKey = canon
+			reqData["model"] = canon
+		}
+		isStreaming = false
+		if s, ok := reqData["stream"].(bool); ok {
+			isStreaming = s
+		}
+		state.Metrics.RecordRequestStarted(routeKey, isStreaming)
+		tts.HandleChatCompletions(c, reqData, bodyText)
+		// best-effort finish metric (handler writes response itself)
+		statusCode = c.Writer.Status()
+		if statusCode == 0 {
+			statusCode = 200
+		}
+		success = statusCode >= 200 && statusCode < 400
+		state.Metrics.RecordRequestFinished(routeKey, statusCode, float64(time.Since(startTime).Milliseconds()), 0, success)
+		return
 	}
 
 	// Convert Responses API requests to chat completions because upstream does not
